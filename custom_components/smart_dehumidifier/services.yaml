@@ -1,0 +1,5 @@
+train_model:
+  name: Train model
+  description: >-
+    Train the local self-learning model now on accumulated data (runs in this
+    Home Assistant process; data never leaves the machine).

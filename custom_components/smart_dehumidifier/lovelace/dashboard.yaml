@@ -1,0 +1,104 @@
+# 智能除湿机 —— 打包仪表盘(Mushroom + ApexCharts 美化版)
+#
+# 需要先用 HACS 安装两个前端卡片(集成装好后会在「设置 → 修复」里提示你):
+#   1. Mushroom            (HACS → 前端 搜 "Mushroom")
+#   2. ApexCharts Card     (HACS → 前端 搜 "apexcharts-card")
+# 装好并刷新浏览器后:仪表盘 → 编辑 → 添加卡片 → 手动 → 粘贴本文件全部内容 → 保存。
+#
+# 只引用集成的稳定核心实体(湿度走 learning_engine 的 current_humidity 属性,与设备区域无关):
+#   sensor.smart_dehumidifier_learning_engine / model_status
+#   switch.smart_dehumidifier_autonomous_control
+
+type: vertical-stack
+cards:
+  - type: custom:mushroom-template-card
+    primary: 智能除湿
+    secondary: >-
+      {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+      {{ state_attr(e, 'current_humidity') | round(0) }}% · 目标 {{ state_attr(e,
+      'target_humidity') | round(0) }}% · {{ '运行中' if state_attr(e,
+      'is_running') else '待机' }} · {{ states(e) }}
+    multiline_secondary: true
+    icon: mdi:air-humidifier
+    icon_color: >-
+      {% set h = state_attr('sensor.smart_dehumidifier_learning_engine',
+      'current_humidity') | float(0) %}
+      {{ 'red' if h >= 75 else 'orange' if h >= 65 else 'green' }}
+
+  - type: custom:mushroom-chips-card
+    alignment: center
+    chips:
+      - type: template
+        icon: mdi:brain
+        content: >-
+          可信度 {{ state_attr('sensor.smart_dehumidifier_learning_engine', 'prediction_confidence_cn') or '—' }}
+      - type: template
+        icon: mdi:cog-outline
+        content: >-
+          {{ '本地模型' if state_attr('sensor.smart_dehumidifier_learning_engine', 'predictor') == 'model' else '规则' }}
+      - type: template
+        icon: mdi:database-outline
+        content: >-
+          样本 {{ state_attr('sensor.smart_dehumidifier_learning_engine', 'dataset_total') or 0 }}
+      - type: template
+        icon: mdi:home-thermometer-outline
+        content: >-
+          霉菌 {{ state_attr('sensor.smart_dehumidifier_learning_engine', 'mold_risk_level') or '—' }}
+
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: 当前湿度
+    chart_type: radialBar
+    series:
+      - entity: sensor.smart_dehumidifier_learning_engine
+        attribute: current_humidity
+        name: 湿度
+        min: 30
+        max: 90
+
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: custom:mushroom-entity-card
+        entity: switch.smart_dehumidifier_autonomous_control
+        name: 自主控制
+        icon: mdi:robot
+      - type: custom:mushroom-entity-card
+        entity: sensor.smart_dehumidifier_model_status
+        name: 本地模型
+        icon: mdi:chart-bell-curve-cumulative
+
+  - type: custom:apexcharts-card
+    graph_span: 24h
+    header:
+      show: true
+      title: 湿度趋势(24 小时)
+    series:
+      - entity: sensor.smart_dehumidifier_learning_engine
+        attribute: current_humidity
+        name: 室内湿度
+        stroke_width: 2
+
+  - type: markdown
+    content: >
+      {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+      {% set running = state_attr(e, 'is_running') %}
+      #### 预测与决策
+
+      - **预计下次{{ '关机' if running else '开机' }}**:
+      {{ (state_attr(e, 'predicted_stop_time') if running else state_attr(e, 'predicted_next_start_time')) or '--' }}
+
+      - **学到的速率**:除湿 {{ state_attr(e, 'effective_drop_rate') }} ·
+      回潮 {{ state_attr(e, 'effective_rebound_rate') }} %/分钟
+
+      - **关键时长**:最小运行 {{ state_attr(e, 'min_runtime_minutes') }} 分钟 ·
+      低湿锁定 {{ state_attr(e, 'lockout_minutes') }} 分钟
+
+      - **外部环境**:{{ state_attr(e, 'external_advice') or '—' }}
+
+      {% if state_attr(e, 'anomaly_level') in ['warning', 'notice'] %}
+
+      > ⚠️ {{ state_attr(e, 'anomaly_summary') }}
+      {% endif %}

@@ -1,0 +1,76 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Dehumidifier",
+        "description": "Select the humidity sensor and dehumidifier to control. Temperature is optional (enables dew point / mold-risk targeting).",
+        "data": {
+          "humidity_sensor": "Humidity sensor",
+          "dehumidifier_switch": "Dehumidifier (switch / fan / humidifier)",
+          "temperature_sensor": "Temperature sensor (optional)",
+          "target_humidity": "Target humidity (%)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This humidity sensor is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Smart Dehumidifier options",
+        "data": {
+          "target_humidity": "Target humidity (%)",
+          "update_interval": "Update interval (seconds)",
+          "target_mode": "Target mode",
+          "enable_model": "Use the local self-learning model when it beats the heuristic",
+          "temperature_sensor": "Temperature sensor (optional)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "target_mode": {
+      "options": {
+        "fixed": "Fixed humidity",
+        "mold_risk": "Mold-risk (temperature-aware)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "learning_engine": { "name": "Learning engine" },
+      "model_status": { "name": "Model status" },
+      "humidity": { "name": "Humidity" }
+    },
+    "switch": {
+      "autonomous_control": { "name": "Autonomous control" }
+    },
+    "number": {
+      "target_humidity": { "name": "Target humidity" }
+    },
+    "select": {
+      "operating_mode": {
+        "name": "Operating mode",
+        "state": {
+          "energy_saving": "Energy saving",
+          "comfort": "Comfort",
+          "drying": "Drying"
+        }
+      }
+    }
+  },
+  "services": {
+    "train_model": {
+      "name": "Train model",
+      "description": "Train the local self-learning model now on accumulated data."
+    }
+  },
+  "issues": {
+    "frontend_cards": {
+      "title": "Install recommended dashboard cards (via HACS)",
+      "description": "The packaged Smart Dehumidifier dashboard (custom_components/smart_dehumidifier/lovelace/dashboard.yaml) uses two HACS frontend cards:\n\n1. **Mushroom** (search \"Mushroom\" in HACS → Frontend)\n2. **ApexCharts Card** (search \"apexcharts-card\")\n\nInstall both in HACS → Frontend, reload your browser, then paste the dashboard YAML via Edit dashboard → Add card → Manual. You can ignore/dismiss this if you prefer to build your own cards."
+    }
+  }
+}

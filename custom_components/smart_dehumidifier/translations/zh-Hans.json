@@ -1,0 +1,76 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "智能除湿机",
+        "description": "选择湿度传感器和要控制的除湿机。温度可选(启用露点/防霉目标)。",
+        "data": {
+          "humidity_sensor": "湿度传感器",
+          "dehumidifier_switch": "除湿机(开关 / 风扇 / 加湿器实体)",
+          "temperature_sensor": "温度传感器(可选)",
+          "target_humidity": "目标湿度(%)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "该湿度传感器已配置。"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "智能除湿机选项",
+        "data": {
+          "target_humidity": "目标湿度(%)",
+          "update_interval": "更新周期(秒)",
+          "target_mode": "目标模式",
+          "enable_model": "当本地模型比启发式更准时启用它",
+          "temperature_sensor": "温度传感器(可留空)"
+        }
+      }
+    }
+  },
+  "selector": {
+    "target_mode": {
+      "options": {
+        "fixed": "固定湿度",
+        "mold_risk": "防霉(按温度自适应)"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "learning_engine": { "name": "学习引擎" },
+      "model_status": { "name": "模型状态" },
+      "humidity": { "name": "湿度" }
+    },
+    "switch": {
+      "autonomous_control": { "name": "自主控制" }
+    },
+    "number": {
+      "target_humidity": { "name": "目标湿度" }
+    },
+    "select": {
+      "operating_mode": {
+        "name": "运行模式",
+        "state": {
+          "energy_saving": "节能",
+          "comfort": "舒适",
+          "drying": "干衣"
+        }
+      }
+    }
+  },
+  "services": {
+    "train_model": {
+      "name": "训练模型",
+      "description": "立即用已积累的数据在本机训练自学习模型。"
+    }
+  },
+  "issues": {
+    "frontend_cards": {
+      "title": "请用 HACS 安装推荐的仪表盘卡片",
+      "description": "智能除湿机的打包仪表盘(custom_components/smart_dehumidifier/lovelace/dashboard.yaml)用到两个 HACS 前端卡片:\n\n1. **Mushroom**(在 HACS → 前端 里搜 “Mushroom”)\n2. **ApexCharts Card**(搜 “apexcharts-card”)\n\n在 HACS → 前端 里装好这两个、刷新浏览器,然后在「编辑仪表盘 → 添加卡片 → 手动」里粘贴打包仪表盘 YAML 即可。若你想自己做卡片,可忽略/关闭本提示。"
+    }
+  }
+}
