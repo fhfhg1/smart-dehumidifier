@@ -70,7 +70,7 @@
   "issues": {
     "frontend_cards": {
       "title": "Install recommended dashboard cards (via HACS)",
-      "description": "The packaged Smart Dehumidifier dashboard (custom_components/smart_dehumidifier/lovelace/dashboard.yaml) uses two HACS frontend cards:\n\n1. **Mushroom** (search \"Mushroom\" in HACS → Frontend)\n2. **ApexCharts Card** (search \"apexcharts-card\")\n\nInstall both in HACS → Frontend, reload your browser, then paste the dashboard YAML via Edit dashboard → Add card → Manual. You can ignore/dismiss this if you prefer to build your own cards."
+      "description": "The packaged Smart Dehumidifier dashboard (custom_components/smart_dehumidifier/lovelace/dashboard.yaml) uses two HACS frontend cards:\n\n1. **Mushroom** (search \"Mushroom\" in HACS → Frontend)\n2. **button-card** (search \"button-card\")\n\nInstall both in HACS → Frontend, reload your browser, then paste the dashboard YAML via Edit dashboard → Add card → Manual. You can ignore/dismiss this if you prefer to build your own cards."
     }
   }
 }

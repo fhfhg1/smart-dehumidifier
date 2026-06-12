@@ -70,7 +70,7 @@
   "issues": {
     "frontend_cards": {
       "title": "请用 HACS 安装推荐的仪表盘卡片",
-      "description": "智能除湿机的打包仪表盘(custom_components/smart_dehumidifier/lovelace/dashboard.yaml)用到两个 HACS 前端卡片:\n\n1. **Mushroom**(在 HACS → 前端 里搜 “Mushroom”)\n2. **ApexCharts Card**(搜 “apexcharts-card”)\n\n在 HACS → 前端 里装好这两个、刷新浏览器,然后在「编辑仪表盘 → 添加卡片 → 手动」里粘贴打包仪表盘 YAML 即可。若你想自己做卡片,可忽略/关闭本提示。"
+      "description": "智能除湿机的打包仪表盘(custom_components/smart_dehumidifier/lovelace/dashboard.yaml)用到两个 HACS 前端卡片:\n\n1. **Mushroom**(在 HACS → 前端 里搜 “Mushroom”)\n2. **button-card**(搜 “button-card”)\n\n在 HACS → 前端 里装好这两个、刷新浏览器,然后在「编辑仪表盘 → 添加卡片 → 手动」里粘贴打包仪表盘 YAML 即可。若你想自己做卡片,可忽略/关闭本提示。"
     }
   }
 }
