@@ -3,177 +3,169 @@
 # 用法:仪表盘 → 编辑 → 添加卡片 → 手动(Manual)→ 粘贴本文件全部内容 → 保存。
 type: vertical-stack
 cards:
-  # ---- 顶部:随湿度变色的大屏 ----
-  - type: custom:button-card
-    entity: sensor.smart_dehumidifier_humidity
-    show_icon: false
-    show_name: false
-    show_state: false
-    tap_action:
-      action: more-info
+- type: custom:button-card
+  entity: sensor.smart_dehumidifier_humidity
+  show_icon: false
+  show_name: false
+  show_state: false
+  tap_action:
+    action: more-info
+  custom_fields:
+    room: 智能除湿
+    target: '[[[ const t = states[''sensor.smart_dehumidifier_learning_engine'']?.attributes?.target_humidity; return `目标 ${t ? Math.round(t) : 60}%`; ]]]'
+    humidity: "[[[\n  const h = Number(entity?.state);\n  return isNaN(h) ? '--%' : `${Math.round(h)}%`;\n]]]"
+    label: '[[[ return states[''sensor.smart_dehumidifier_learning_engine'']?.state || ''正在积累样本''; ]]]'
+    action: "[[[\n  const e = states['sensor.smart_dehumidifier_learning_engine']?.attributes || {};\n  const running = e.is_running;\n  const t = running ? e.predicted_stop_time : e.predicted_next_start_time;\n  if (t && !['--','unknown','unavailable',''].includes(t)) return running ? `预计 ${t} 关机` : `预计 ${t} 开机`;\n  return running ? '除湿中…' : '环境稳定';\n]]]"
+    chips: "[[[\n  const e = states['sensor.smart_dehumidifier_learning_engine']?.attributes || {};\n  const conf = e.prediction_confidence_cn || '低';\n  const pred = e.predictor === 'model' ? '本地模型' : '规则';\n  const ctrl = states['switch.smart_dehumidifier_autonomous_control']?.state === 'on' ? '已接管' : '仅建议';\n  return `${pred} · 可信度${conf} · ${ctrl}`;\n]]]"
+  styles:
+    card:
+    - min-height: 232px
+    - border-radius: 28px
+    - padding: 18px 20px
+    - box-shadow: none
+    - overflow: hidden
+    - border: '[[[ const h = Number(entity?.state); if (isNaN(h)) return ''1px solid color-mix(in srgb, var(--card-background-color) 78%, #9e9e9e 22%)''; if (h < 50) return ''1px solid color-mix(in srgb, var(--card-background-color) 74%, #9c27b0 26%)''; if (h < 55) return ''1px solid color-mix(in srgb, var(--card-background-color) 74%, #2196f3 26%)''; if (h < 65) return ''1px solid color-mix(in srgb, var(--card-background-color) 76%, #4caf50 24%)''; if (h < 70) return ''1px solid color-mix(in srgb, var(--card-background-color) 75%, #26a69a 25%)''; if (h < 80) return ''1px solid color-mix(in srgb, var(--card-background-color) 74%, #ffc107 26%)''; return ''1px solid color-mix(in srgb, var(--card-background-color) 74%, #f44336 26%)''; ]]]'
+    - background: '[[[ const h = Number(entity?.state); if (isNaN(h)) return ''linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 86%, #9e9e9e 14%), color-mix(in srgb, var(--card-background-color) 95%, #9e9e9e 5%))''; if (h < 50) return ''linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 82%, #9c27b0 18%), color-mix(in srgb, var(--card-background-color) 94%, #9c27b0 6%))''; if (h < 55) return ''linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 82%, #2196f3 18%), color-mix(in srgb, var(--card-background-color) 94%, #2196f3 6%))''; if (h < 65) return ''linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 84%, #4caf50 16%), color-mix(in srgb, var(--card-background-color) 95%, #4caf50 5%))''; if (h < 70) return ''linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 84%, #26a69a 16%), color-mix(in srgb, var(--card-background-color) 95%, #26a69a 5%))''; if (h < 80) return ''linear-gradient(180deg,
+        color-mix(in srgb, var(--card-background-color) 83%, #ffc107 17%), color-mix(in srgb, var(--card-background-color) 95%, #ffc107 5%))''; return ''linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 83%, #f44336 17%), color-mix(in srgb, var(--card-background-color) 95%, #f44336 5%))''; ]]]'
+    grid:
+    - grid-template-areas: '"room target" "humidity humidity" "label label" "action action" "chips chips"'
+    - grid-template-columns: 1fr auto
+    - grid-template-rows: min-content 1fr min-content min-content min-content
     custom_fields:
-      room: 智能除湿
-      target: >-
-        [[[ const t = states['sensor.smart_dehumidifier_learning_engine']?.attributes?.target_humidity; return `目标 ${t ? Math.round(t) : 60}%`; ]]]
-      humidity: >-
-        [[[
-          const h = Number(entity?.state);
-          return isNaN(h) ? '--%' : `${Math.round(h)}%`;
-        ]]]
-      label: >-
-        [[[ return states['sensor.smart_dehumidifier_learning_engine']?.state || '正在积累样本'; ]]]
-      action: >-
-        [[[
-          const e = states['sensor.smart_dehumidifier_learning_engine']?.attributes || {};
-          const running = e.is_running;
-          const t = running ? e.predicted_stop_time : e.predicted_next_start_time;
-          if (t && !['--','unknown','unavailable',''].includes(t)) return running ? `预计 ${t} 关机` : `预计 ${t} 开机`;
-          return running ? '除湿中…' : '环境稳定';
-        ]]]
-      chips: >-
-        [[[
-          const e = states['sensor.smart_dehumidifier_learning_engine']?.attributes || {};
-          const conf = e.prediction_confidence_cn || '低';
-          const pred = e.predictor === 'model' ? '本地模型' : '规则';
-          const ctrl = states['switch.smart_dehumidifier_autonomous_control']?.state === 'on' ? '已接管' : '仅建议';
-          return `${pred} · 可信度${conf} · ${ctrl}`;
-        ]]]
-    styles:
-      card:
-        - min-height: 232px
-        - border-radius: 28px
-        - padding: 18px 20px
-        - box-shadow: none
-        - overflow: hidden
-        - border: >-
-            [[[ const h = Number(entity?.state); if (isNaN(h)) return '1px solid color-mix(in srgb, var(--card-background-color) 78%, #9e9e9e 22%)'; if (h < 50) return '1px solid color-mix(in srgb, var(--card-background-color) 74%, #9c27b0 26%)'; if (h < 55) return '1px solid color-mix(in srgb, var(--card-background-color) 74%, #2196f3 26%)'; if (h < 65) return '1px solid color-mix(in srgb, var(--card-background-color) 76%, #4caf50 24%)'; if (h < 70) return '1px solid color-mix(in srgb, var(--card-background-color) 75%, #26a69a 25%)'; if (h < 80) return '1px solid color-mix(in srgb, var(--card-background-color) 74%, #ffc107 26%)'; return '1px solid color-mix(in srgb, var(--card-background-color) 74%, #f44336 26%)'; ]]]
-        - background: >-
-            [[[ const h = Number(entity?.state); if (isNaN(h)) return 'linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 86%, #9e9e9e 14%), color-mix(in srgb, var(--card-background-color) 95%, #9e9e9e 5%))'; if (h < 50) return 'linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 82%, #9c27b0 18%), color-mix(in srgb, var(--card-background-color) 94%, #9c27b0 6%))'; if (h < 55) return 'linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 82%, #2196f3 18%), color-mix(in srgb, var(--card-background-color) 94%, #2196f3 6%))'; if (h < 65) return 'linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 84%, #4caf50 16%), color-mix(in srgb, var(--card-background-color) 95%, #4caf50 5%))'; if (h < 70) return 'linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 84%, #26a69a 16%), color-mix(in srgb, var(--card-background-color) 95%, #26a69a 5%))'; if (h < 80) return 'linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 83%, #ffc107 17%), color-mix(in srgb, var(--card-background-color) 95%, #ffc107 5%))'; return 'linear-gradient(180deg, color-mix(in srgb, var(--card-background-color) 83%, #f44336 17%), color-mix(in srgb, var(--card-background-color) 95%, #f44336 5%))'; ]]]
-      grid:
-        - grid-template-areas: '"room target" "humidity humidity" "label label" "action action" "chips chips"'
-        - grid-template-columns: 1fr auto
-        - grid-template-rows: min-content 1fr min-content min-content min-content
-      custom_fields:
-        room:
-          - justify-self: start
-          - font-size: 12px
-          - font-weight: 700
-          - color: var(--secondary-text-color)
-        target:
-          - justify-self: end
-          - font-size: 12px
-          - color: var(--secondary-text-color)
-          - background: color-mix(in srgb, var(--card-background-color) 88%, var(--primary-text-color) 12%)
-          - border: 1px solid color-mix(in srgb, var(--card-background-color) 78%, var(--primary-text-color) 22%)
-          - padding: 7px 12px
-          - border-radius: 999px
-        humidity:
-          - justify-self: center
-          - align-self: center
-          - font-size: clamp(88px, 14vw, 144px)
-          - font-weight: 900
-          - line-height: .88
-          - color: var(--primary-text-color)
-        label:
-          - justify-self: center
-          - font-size: 19px
-          - font-weight: 800
-          - color: var(--primary-text-color)
-        action:
-          - justify-self: center
-          - margin-top: 4px
-          - font-size: 17px
-          - color: var(--primary-text-color)
-          - text-align: center
-        chips:
-          - justify-self: center
-          - margin-top: 12px
-          - font-size: 12px
-          - color: var(--primary-text-color)
-          - background: color-mix(in srgb, var(--card-background-color) 90%, var(--primary-text-color) 10%)
-          - border: 1px solid color-mix(in srgb, var(--card-background-color) 80%, var(--primary-text-color) 20%)
-          - padding: 7px 13px
-          - border-radius: 999px
-          - white-space: normal
-          - text-align: center
-
-  # ---- 控制:目标湿度 / 运行模式 / 自主控制 ----
-  - type: grid
-    columns: 2
-    square: false
-    cards:
-      - type: custom:mushroom-number-card
-        entity: number.smart_dehumidifier_target_humidity
-        name: 目标湿度
-        icon: mdi:water-percent
-        icon_color: purple
-        display_mode: buttons
-        layout: horizontal
-        fill_container: true
-      - type: custom:mushroom-select-card
-        entity: select.smart_dehumidifier_operating_mode
-        name: 运行模式
-        icon: mdi:tune-variant
-        icon_color: purple
-
-  - type: custom:mushroom-entity-card
-    entity: switch.smart_dehumidifier_autonomous_control
-    name: 自主控制(开 = 由引擎接管开关机)
-    icon: mdi:robot
-    icon_color: >-
-      {{ 'purple' if is_state('switch.smart_dehumidifier_autonomous_control','on') else 'grey' }}
-    secondary_info: last-changed
-    tap_action:
-      action: toggle
-    double_tap_action:
-      action: more-info
-    hold_action:
-      action: more-info
-
-  # ---- 预测与学习 ----
-  - type: custom:mushroom-template-card
-    primary: 预测与学习
-    secondary: >-
-      {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
-      除湿 {{ state_attr(e,'effective_drop_rate') or 0 }} · 回潮 {{ state_attr(e,'effective_rebound_rate') or 0 }} %/分
-      · 最小运行 {{ state_attr(e,'min_runtime_minutes') or 30 }} 分 · 锁定 {{ state_attr(e,'lockout_minutes') or 45 }} 分
-      · 可训练:运行 {{ state_attr(e,'dataset_runs') or 0 }} 次 / 回潮 {{ state_attr(e,'dataset_rebounds') or 0 }} 次
-    icon: mdi:brain
+      room:
+      - justify-self: start
+      - font-size: 12px
+      - font-weight: 700
+      - color: var(--secondary-text-color)
+      target:
+      - justify-self: end
+      - font-size: 12px
+      - color: var(--secondary-text-color)
+      - background: color-mix(in srgb, var(--card-background-color) 88%, var(--primary-text-color) 12%)
+      - border: 1px solid color-mix(in srgb, var(--card-background-color) 78%, var(--primary-text-color) 22%)
+      - padding: 7px 12px
+      - border-radius: 999px
+      humidity:
+      - justify-self: center
+      - align-self: center
+      - font-size: clamp(88px, 14vw, 144px)
+      - font-weight: 900
+      - line-height: 0.88
+      - color: var(--primary-text-color)
+      label:
+      - justify-self: center
+      - font-size: 19px
+      - font-weight: 800
+      - color: var(--primary-text-color)
+      action:
+      - justify-self: center
+      - margin-top: 4px
+      - font-size: 17px
+      - color: var(--primary-text-color)
+      - text-align: center
+      chips:
+      - justify-self: center
+      - margin-top: 12px
+      - font-size: 12px
+      - color: var(--primary-text-color)
+      - background: color-mix(in srgb, var(--card-background-color) 90%, var(--primary-text-color) 10%)
+      - border: 1px solid color-mix(in srgb, var(--card-background-color) 80%, var(--primary-text-color) 20%)
+      - padding: 7px 13px
+      - border-radius: 999px
+      - white-space: normal
+      - text-align: center
+- type: grid
+  columns: 2
+  square: false
+  cards:
+  - type: custom:mushroom-number-card
+    entity: number.smart_dehumidifier_target_humidity
+    name: 目标湿度
+    icon: mdi:water-percent
     icon_color: purple
-    multiline_secondary: true
-
+    display_mode: buttons
+    layout: horizontal
+    fill_container: true
+  - type: custom:mushroom-select-card
+    entity: select.smart_dehumidifier_operating_mode
+    name: 运行模式
+    icon: mdi:tune-variant
+    icon_color: purple
+- type: custom:mushroom-entity-card
+  entity: switch.smart_dehumidifier_autonomous_control
+  name: 自主控制(开 = 由引擎接管开关机)
+  icon: mdi:robot
+  icon_color: '{{ ''purple'' if is_state(''switch.smart_dehumidifier_autonomous_control'',''on'') else ''grey'' }}'
+  secondary_info: last-changed
+  tap_action:
+    action: toggle
+  double_tap_action:
+    action: more-info
+  hold_action:
+    action: more-info
+- type: custom:mushroom-template-card
+  primary: 预测与学习
+  secondary: '{% set e = ''sensor.smart_dehumidifier_learning_engine'' %} {% set runs = state_attr(e,''dataset_runs'') or 0 %} {% set rebounds = state_attr(e,''dataset_rebounds'') or 0 %} 除湿 {{ state_attr(e,''effective_drop_rate'') or 0 }} · 回潮 {{ state_attr(e,''effective_rebound_rate'') or 0 }} %/分 · 最小运行 {{ state_attr(e,''min_runtime_minutes'') or 30 }} 分 · 锁定 {{ state_attr(e,''lockout_minutes'') or 45 }} 分 · 可训练:运行 {{ runs }} 次 / 回潮 {{ rebounds }} 次 {% if runs >= 50 and rebounds >= 20 %} \n已具备部分主控基础，可开始对比验证接管效果 {% elif runs >= 25 and rebounds >= 12 %} \n已进入参数级学习，可逐步接管建议值 {% else %} \n仍在积累关键样本，当前以观察和建议为主 {% endif %}'
+  icon: mdi:brain
+  icon_color: purple
+  multiline_secondary: true
+- type: grid
+  columns: 4
+  square: false
+  cards:
   - type: custom:mushroom-template-card
-    primary: 环境与健康
-    secondary: >-
-      {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
-      霉菌风险 {{ state_attr(e,'mold_risk_level') or '—' }}{% if state_attr(e,'dew_point_c') %} · 露点 {{ state_attr(e,'dew_point_c') }}℃{% endif %}
-      · {{ state_attr(e,'external_advice') or '无外部环境调整' }}
-    icon: mdi:home-thermometer-outline
+    primary: '{% set e = ''sensor.smart_dehumidifier_learning_engine'' %} {{ state_attr(e,''dataset_runs'') or 0 }}'
+    secondary: 运行样本
+    icon: mdi:play-circle-outline
+    icon_color: blue
+    fill_container: true
+    layout: vertical
+  - type: custom:mushroom-template-card
+    primary: '{% set e = ''sensor.smart_dehumidifier_learning_engine'' %} {{ state_attr(e,''dataset_rebounds'') or 0 }}'
+    secondary: 回潮样本
+    icon: mdi:water-sync
     icon_color: teal
-    multiline_secondary: true
-
-  # ---- 湿度趋势 ----
-  - type: history-graph
-    title: 湿度趋势(24 小时)
-    hours_to_show: 24
-    entities:
-      - entity: sensor.smart_dehumidifier_humidity
-        name: 室内湿度
-
-  # ---- 模型 ----
-  - type: grid
-    columns: 2
-    square: false
-    cards:
-      - type: custom:mushroom-entity-card
-        entity: sensor.smart_dehumidifier_model_status
-        name: 本地模型
-        icon: mdi:chart-bell-curve-cumulative
-      - type: custom:mushroom-template-card
-        primary: 立即训练
-        secondary: 用已积累数据训练
-        icon: mdi:school-outline
-        icon_color: purple
-        tap_action:
-          action: call-service
-          service: smart_dehumidifier.train_model
+    fill_container: true
+    layout: vertical
+  - type: custom:mushroom-template-card
+    primary: '{% set e = ''sensor.smart_dehumidifier_learning_engine'' %} {{ state_attr(e,''dataset_snapshots'') or 0 }}'
+    secondary: 快照样本
+    icon: mdi:chart-timeline-variant
+    icon_color: cyan
+    fill_container: true
+    layout: vertical
+  - type: custom:mushroom-template-card
+    primary: "{% set e = 'sensor.smart_dehumidifier_learning_engine' %} {% set runs = state_attr(e,'dataset_runs') or 0 %} {% set rebounds = state_attr(e,'dataset_rebounds') or 0 %} {% if runs >= 50 and rebounds >= 20 %}\n  可主控\n{% elif runs >= 25 and rebounds >= 12 %}\n  可调参\n{% else %}\n  观察中\n{% endif %}"
+    secondary: 当前阶段
+    icon: mdi:robot-outline
+    icon_color: '{% set e = ''sensor.smart_dehumidifier_learning_engine'' %} {% set runs = state_attr(e,''dataset_runs'') or 0 %} {% set rebounds = state_attr(e,''dataset_rebounds'') or 0 %} {% if runs >= 50 and rebounds >= 20 %} green {% elif runs >= 25 and rebounds >= 12 %} amber {% else %} grey {% endif %}'
+    fill_container: true
+    layout: vertical
+- type: custom:mushroom-template-card
+  primary: 环境与健康
+  secondary: '{% set e = ''sensor.smart_dehumidifier_learning_engine'' %} 霉菌风险 {{ state_attr(e,''mold_risk_level'') or ''—'' }}{% if state_attr(e,''dew_point_c'') %} · 露点 {{ state_attr(e,''dew_point_c'') }}℃{% endif %} · {{ state_attr(e,''external_advice'') or ''无外部环境调整'' }}'
+  icon: mdi:home-thermometer-outline
+  icon_color: teal
+  multiline_secondary: true
+- type: history-graph
+  title: 湿度趋势(24 小时)
+  hours_to_show: 24
+  entities:
+  - entity: sensor.smart_dehumidifier_humidity
+    name: 室内湿度
+- type: grid
+  columns: 2
+  square: false
+  cards:
+  - type: custom:mushroom-entity-card
+    entity: sensor.smart_dehumidifier_model_status
+    name: 本地模型
+    icon: mdi:chart-bell-curve-cumulative
+  - type: custom:mushroom-template-card
+    primary: 立即训练
+    secondary: 用已积累数据训练
+    icon: mdi:school-outline
+    icon_color: purple
+    tap_action:
+      action: call-service
+      service: smart_dehumidifier.train_model

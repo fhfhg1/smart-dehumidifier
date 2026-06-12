@@ -58,13 +58,19 @@
   有效目标 = min(用户目标, 按温度算的防霉上限)(冷房更严:<16℃→55%、<20℃→58%、否则 60%)。
   暴露 `dew_point_c` / `mold_risk_level` / `effective_target` 属性。temp 缺失则回退固定目标。
 
-## 打包仪表盘(开箱即用,零额外依赖)
+## 打包仪表盘
 
-`lovelace/dashboard.yaml` 是一张用 **HA 内置卡片**(gauge / entities / markdown / history-graph)
-拼的卡片,引用集成自动创建的固定实体(含数值湿度 `sensor.smart_dehumidifier_humidity`)。
-**不需要安装任何 HACS 前端卡片。** 用法:仪表盘 → 编辑 → 添加卡片 → 手动 →
-粘贴 `lovelace/dashboard.yaml` 全部内容 → 保存。展示:湿度仪表盘、自主控制开关、
-预测/置信度/关键时长/霉菌风险/外部环境/决策来源、24h 湿度趋势。
+`lovelace/dashboard.yaml` 提供了一份可直接粘贴的插件界面卡片，引用集成自动创建的固定实体
+（含数值湿度 `sensor.smart_dehumidifier_humidity`）。
+
+当前这套界面依赖两张 HACS 前端卡：
+
+- Mushroom
+- button-card
+
+用法：仪表盘 → 编辑 → 添加卡片 → 手动 → 粘贴 `lovelace/dashboard.yaml` 全部内容 → 保存。
+
+如果你想使用完整页面版本，请改用仓库根目录下的 `ui-smart-dehumidifier-plugin.yaml`。
 
 ## 路线(对标 HA 集成质量等级)
 

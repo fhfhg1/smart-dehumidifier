@@ -19,7 +19,7 @@ from .coordinator import SmartDehumidifierCoordinator
 
 _ENGINE_ATTRS = (
     "current_humidity", "target_humidity", "configured_target_humidity", "is_running",
-    "dataset_total", "dataset_runs", "dataset_rebounds", "scene", "mode",
+    "dataset_total", "dataset_runs", "dataset_rebounds", "dataset_snapshots", "scene", "mode",
     "prediction_confidence", "prediction_confidence_cn",
     "effective_drop_rate", "effective_rebound_rate",
     "predicted_stop_time", "predicted_next_start_time",

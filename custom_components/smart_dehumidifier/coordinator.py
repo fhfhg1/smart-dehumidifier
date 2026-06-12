@@ -41,6 +41,9 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 _CSV_HEADER = "timestamp,event,scene,mode_or_state,humidity,target,extra"
 _REBOUND_WINDOWS = (30, 60, 90)
+_NIGHT_START_HOUR = 23
+_NIGHT_START_MINUTE = 30
+_NIGHT_END_HOUR = 8
 
 
 class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -68,6 +71,19 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 接管控制(由 switch 实体置位;默认关 = 仅建议,装好不会突然抢控制)
         self.control_enabled = False
         self.last_control_action: str | None = None
+
+    async def async_initialize(self) -> None:
+        """Preload persisted model/state off the event loop before first refresh."""
+        await self.hass.async_add_executor_job(self._initialize_sync)
+
+    def _initialize_sync(self) -> None:
+        """Load persisted files in a worker thread."""
+        if not self._model_loaded:
+            self._model = model.load(self._model_path)
+            self._model_loaded = True
+        if not self._state_loaded:
+            self._load_state()
+            self._state_loaded = True
 
     # ---- 更新主流程 -----------------------------------------------------------
     async def _async_update_data(self) -> dict[str, Any]:
@@ -145,13 +161,10 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _compute(self, humidity: float, target: float, running: bool, enable_model: bool,
                  target_mode: str, temp_c: float | None, operating_mode: str = DEFAULT_MODE) -> dict[str, Any]:
         now = datetime.now()
+        scene = self._scene_for_now(now)
 
-        if not self._model_loaded:  # executor 线程里懒加载模型(阻塞读放这里)
-            self._model = model.load(self._model_path)
-            self._model_loaded = True
-        if not self._state_loaded:  # 恢复跨重启的在途运行状态
-            self._load_state()
-            self._state_loaded = True
+        if not self._model_loaded or not self._state_loaded:
+            self._initialize_sync()
 
         # 露点 / 霉菌风险,以及"防霉模式"下的有效目标(取更严者)
         dew_point = climate_math.dew_point_c(temp_c, humidity) if temp_c is not None else None
@@ -167,16 +180,18 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         drop_override = rebound_override = None
         if enable_model and self._model:
-            sample = {"scene": "normal", "mode": operating_mode, "start_humidity": humidity,
+            sample = {"scene": scene, "mode": operating_mode, "start_humidity": humidity,
                       "target_humidity": target, "datetime": now.isoformat()}
             drop_override = model.predict_rate(self._model, "drop_rate", sample)
             rebound_override = model.predict_rate(self._model, "rebound_rate", sample)
 
+        initial_start_offset = 7 if scene == "night" else DEFAULT_START_OFFSET
+
         context = ml_core.PredictionContext(
-            humidity=humidity, target=target, scene="normal", mode=operating_mode,
+            humidity=humidity, target=target, scene=scene, mode=operating_mode,
             state="running" if running else "off", running=running,
             current_drop_rate=0.0, current_rebound_rate=0.0,
-            start_threshold=target + DEFAULT_START_OFFSET, min_runtime_left=0, now=now,
+            start_threshold=target + initial_start_offset, min_runtime_left=0, now=now,
         )
         result = ml_core.compute_predictions(
             runs, rebounds, snapshots, context,
@@ -191,6 +206,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result["configured_target_humidity"] = round(user_target, 1)
         result["is_running"] = running
         result["control_action"] = self._decide_action(now, humidity, target, running, result)
+        result["start_threshold_applied"] = round(self._start_threshold_for_now(now, target, result), 1)
+        result["is_night_window"] = scene == "night"
 
         self._update_count += 1
         if self._update_count % AUTO_TRAIN_EVERY == 0:
@@ -201,8 +218,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _decide_action(self, now: datetime, humidity: float, target: float,
                        running: bool, result: dict[str, Any]) -> str | None:
         """带硬安全限位的启停判定。返回 'start'/'stop'/None(建议;是否执行由总开关决定)。"""
-        bias = result.get("external_start_bias", 0) or 0
-        start_threshold = target + DEFAULT_START_OFFSET + bias
+        start_threshold = self._start_threshold_for_now(now, target, result)
         min_runtime = result.get("min_runtime_minutes", 30) or 30
         lockout = result.get("lockout_minutes", 45) or 45
         if not running:
@@ -219,6 +235,22 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return "stop"
         return None
 
+    @staticmethod
+    def _scene_for_now(now: datetime) -> str:
+        if now.hour > _NIGHT_START_HOUR or (now.hour == _NIGHT_START_HOUR and now.minute >= _NIGHT_START_MINUTE):
+            return "night"
+        if now.hour < _NIGHT_END_HOUR:
+            return "night"
+        return "normal"
+
+    def _start_threshold_for_now(self, now: datetime, target: float, result: dict[str, Any]) -> float:
+        bias = result.get("external_start_bias", 0) or 0
+        is_night = self._scene_for_now(now) == "night"
+        offset_key = "night_start_offset" if is_night else "day_start_offset"
+        fallback = 7 if is_night else DEFAULT_START_OFFSET
+        offset = result.get(offset_key, fallback) or fallback
+        return target + float(offset) + float(bias)
+
     # ---- 事件检测:把启停/回潮转成训练样本 ------------------------------------
     def _detect_events(self, now: datetime, humidity: float, target: float, running: bool) -> None:
         if self._prev_running is None:
@@ -226,7 +258,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         if running and not self._prev_running:  # 开机
             self._run_start_time, self._run_start_h = now, humidity
-            self._append(now, f"{self._ts(now)},start_auto,scene=normal,mode=comfort,"
+            scene = self._scene_for_now(now)
+            self._append(now, f"{self._ts(now)},start_auto,scene={scene},mode=comfort,"
                               f"humidity={round(humidity,1)},target={int(target)},reason=auto")
         elif not running and self._prev_running:  # 关机 → 记录一次运行
             if self._run_start_time:
@@ -234,7 +267,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 drop = round(self._run_start_h - humidity, 1)
                 rate = round(drop / dur, 3) if dur > 0 else 0
                 event = "stop_low_protect" if humidity <= target - LOW_PROTECT_DELTA else "stop_target"
-                self._append(now, f"{self._ts(now)},{event},scene=normal,start_h={round(self._run_start_h,1)},"
+                scene = self._scene_for_now(self._run_start_time)
+                self._append(now, f"{self._ts(now)},{event},scene={scene},start_h={round(self._run_start_h,1)},"
                                   f"end_h={round(humidity,1)},duration_min={dur},drop={drop},"
                                   f"drop_rate={max(rate,0)},mode=comfort")
             self._last_stop_time, self._last_stop_h = now, humidity
@@ -245,7 +279,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if w not in self._rebound_done and elapsed >= w:
                     self._rebound_done.add(w)
                     rate = round((humidity - self._last_stop_h) / elapsed, 3) if elapsed > 0 else 0
-                    self._append(now, f"{self._ts(now)},rebound_{w}m,scene=normal,"
+                    scene = self._scene_for_now(self._last_stop_time)
+                    self._append(now, f"{self._ts(now)},rebound_{w}m,scene={scene},"
                                       f"start_h={round(self._last_stop_h,1)},humidity={round(humidity,1)},"
                                       f"elapsed_min={elapsed},rebound_rate={max(rate,0)}")
         self._prev_running = running
@@ -303,7 +338,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return now.strftime("%Y-%m-%dT%H:%M:%S")
 
     def _snapshot_line(self, now: datetime, humidity: float, target: float, running: bool) -> str:
-        return (f"{self._ts(now)},snapshot,scene=normal,mode=comfort,"
+        scene = self._scene_for_now(now)
+        return (f"{self._ts(now)},snapshot,scene={scene},mode=comfort,"
                 f"state={'running' if running else 'off'},running={'on' if running else 'off'},"
                 f"humidity={round(humidity,1)},target={int(target)},drop_rate=0,rebound_rate=0,confidence=low")
 
