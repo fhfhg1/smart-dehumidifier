@@ -2,5 +2,5 @@
   "name": "Smart Dehumidifier",
   "content_in_root": false,
   "render_readme": true,
-  "homeassistant": "2024.1.0"
+  "homeassistant": "2026.6.0"
 }

@@ -22,6 +22,26 @@
 4. 选择湿度传感器、除湿机实体、目标湿度。
 5. 如果没有合适的温度传感器，可以留空。
 
+## HACS 安装
+
+仓库结构已经按 HACS 自定义集成方式整理：
+
+- 根目录包含 `hacs.json`
+- 集成本体位于 `custom_components/smart_dehumidifier/`
+- 已提供 GitHub Actions 校验：
+  - `hacs/action`
+  - `hassfest`
+
+等仓库发布正式版本标签后，用户就可以通过 HACS 自定义仓库方式安装。
+
+当前建议的上架前检查：
+
+1. 创建一个正式 Release / Tag，例如 `v0.3.2`
+2. 确认 GitHub 仓库描述、主页链接、issue 链接完整
+3. 给仓库补上 `hacs`、`home-assistant`、`home-assistant-integration` 等 topics
+4. 等 GitHub Actions 的 `Validate` 工作流通过
+5. 再提交到 HACS 默认仓库或先作为自定义仓库分发
+
 ## 前端界面
 
 主界面文件：
