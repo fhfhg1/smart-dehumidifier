@@ -27,8 +27,10 @@ _ENGINE_ATTRS = (
     "control_takeover_summary", "anomaly_level", "anomaly_summary",
     "external_advice", "external_start_bias", "predictor",
     "dew_point_c", "mold_risk_level", "effective_target",
-    "control_enabled", "control_action", "last_control_action",
-    "prediction_bias", "last_sync",
+    "control_enabled", "control_action", "last_control_action", "prediction_bias",
+    "water_estimated_liters", "water_tank_capacity", "water_fill_percent",
+    "water_remaining_liters", "water_level_text", "water_rate_lpm", "water_rate_source",
+    "last_sync",
 )
 
 

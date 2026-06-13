@@ -223,6 +223,35 @@ views:
             icon_color: teal
             multiline_secondary: true
 
+          # ---- 水箱预测 ----
+          - type: custom:mushroom-template-card
+            primary: 水箱预测
+            secondary: >-
+              {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+              约 {{ state_attr(e,'water_estimated_liters') or 0 }}L / {{ state_attr(e,'water_tank_capacity') or 3 }}L
+              · {{ state_attr(e,'water_fill_percent') or 0 }}%
+              · {{ state_attr(e,'water_level_text') or '水箱容量正常' }}
+              · 估算来源:{{ state_attr(e,'water_rate_source') or '兜底估算' }}
+            icon: mdi:cup-water
+            icon_color: >-
+              {% set f = state_attr('sensor.smart_dehumidifier_learning_engine','water_fill_percent') | float(0) %}
+              {{ 'red' if f >= 90 else 'orange' if f >= 50 else 'cyan' }}
+            multiline_secondary: true
+          - type: grid
+            columns: 2
+            square: false
+            cards:
+              - type: custom:mushroom-number-card
+                entity: number.smart_dehumidifier_tank_capacity
+                name: 水箱容量
+                icon: mdi:cup-water
+                icon_color: cyan
+              - type: custom:mushroom-select-card
+                entity: select.smart_dehumidifier_water_calibration
+                name: 倒水前水位(校准)
+                icon: mdi:cup-outline
+                icon_color: cyan
+
           # ---- 湿度趋势 ----
           - type: history-graph
             title: 湿度趋势(24 小时)

@@ -11,13 +11,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from . import climate_math, ml_core, model
+from . import climate_math, ml_core, model, tank_model
 from .const import (
     AUTO_TRAIN_EVERY,
     CONF_DEHUMIDIFIER,
     CONF_ENABLE_MODEL,
     CONF_HUMIDITY_SENSOR,
     CONF_MODE,
+    CONF_TANK_CAPACITY,
     CONF_TARGET,
     CONF_TARGET_MODE,
     CONF_TEMP_SENSOR,
@@ -26,9 +27,11 @@ from .const import (
     DEFAULT_ENABLE_MODEL,
     DEFAULT_MODE,
     DEFAULT_START_OFFSET,
+    DEFAULT_TANK_CAPACITY,
     DEFAULT_TARGET,
     DEFAULT_TARGET_MODE,
     DEFAULT_UPDATE_INTERVAL,
+    DEFAULT_WATER_RATE_LPM,
     LEARNING_CSV,
     LOW_PROTECT_DELTA,
     MIN_SAMPLES_TO_TRAIN,
@@ -37,6 +40,8 @@ from .const import (
     STATE_FILE,
     TARGET_MODE_MOLD,
     UNAVAILABLE_STATES,
+    WATER_CALIB_FRACTIONS,
+    WATER_SAMPLES_FILE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,6 +63,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._model_path = Path(hass.config.path(DATA_DIRNAME, MODEL_LATEST))
         self._state_path = Path(hass.config.path(DATA_DIRNAME, STATE_FILE))
         self._predictions_path = Path(hass.config.path(DATA_DIRNAME, PREDICTIONS_FILE))
+        self._water_samples_path = Path(hass.config.path(DATA_DIRNAME, WATER_SAMPLES_FILE))
+        self._water_run_minutes = 0.0  # 自上次倒水校准以来的累计运行分钟(持久化)
         # 模型与检测状态在首个 executor 周期里懒加载,避免在事件循环里阻塞读文件
         self._model: dict[str, Any] | None = None
         self._model_loaded = False
@@ -219,11 +226,67 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result["prediction_bias"] = bias
         self._apply_prediction_feedback(result, bias, now)
 
+        # ---- 水箱预测:运行时累计"做功" → 学到的换算估当前水量 ----
+        self._update_water(running, humidity, operating_mode, scene, result)
+
         self._update_count += 1
         if self._update_count % AUTO_TRAIN_EVERY == 0:
             self._maybe_train(runs, rebounds)
         result["model_status"] = model.status(self._model)
         return result
+
+    # ---- 水箱预测 ---------------------------------------------------------------
+    def _tank_capacity(self) -> float:
+        return float(self.entry.options.get(
+            CONF_TANK_CAPACITY, self.entry.data.get(CONF_TANK_CAPACITY, DEFAULT_TANK_CAPACITY)))
+
+    def _water_rate_lpm(self, mode: str, scene: str, humidity: float) -> tuple[float, str]:
+        """每运行 1 分钟积水多少升:优先用校准样本分层学习,无样本用兜底。"""
+        samples = ml_core.read_jsonl(self._water_samples_path)
+        rate, layer = tank_model.estimate_rate(samples, mode=mode, scene=scene, humidity=humidity)
+        if rate is None or rate <= 0:
+            return DEFAULT_WATER_RATE_LPM, "兜底估算"
+        return rate, layer
+
+    def _update_water(self, running: bool, humidity: float, mode: str, scene: str,
+                      result: dict[str, Any]) -> None:
+        if running:  # 只在运行时累计做功
+            self._water_run_minutes += self.update_interval.total_seconds() / 60.0
+            self._save_state()
+        rate, layer = self._water_rate_lpm(mode, scene, humidity)
+        capacity = self._tank_capacity()
+        liters = round(self._water_run_minutes * rate, 2)
+        fill = round(min(liters / capacity * 100, 100), 1) if capacity > 0 else 0.0
+        result["water_estimated_liters"] = liters
+        result["water_tank_capacity"] = capacity
+        result["water_fill_percent"] = fill
+        result["water_remaining_liters"] = round(max(capacity - liters, 0), 2)
+        result["water_rate_lpm"] = round(rate, 4)
+        result["water_rate_source"] = layer
+        result["water_level_text"] = (
+            "水箱接近满,建议尽快倒水" if fill >= 90 else
+            "水箱过半" if fill >= 50 else "水箱容量正常")
+
+    def record_water_calibration(self, level_label: str) -> None:
+        """倒水反馈:报"倒水前大概水位"→ 学一条"做功→升水"换算,并把累计清零。"""
+        frac = WATER_CALIB_FRACTIONS.get(level_label)
+        if frac is None:
+            return
+        liters_before = frac * self._tank_capacity()
+        if self._water_run_minutes > 1 and liters_before > 0:
+            rate = liters_before / self._water_run_minutes
+            now = datetime.now()
+            mode = self.entry.options.get(CONF_MODE, DEFAULT_MODE)
+            sample = {
+                "datetime": now.isoformat(),
+                "mode": mode,
+                "scene": self._scene_for_now(now),
+                "humidity_bucket": tank_model.humidity_bucket(self._read_float(self.entry.data.get(CONF_HUMIDITY_SENSOR) or "") or 60),
+                "rate": round(rate, 5),
+            }
+            ml_core.append_jsonl(self._water_samples_path, sample, max_lines=2000)
+        self._water_run_minutes = 0.0  # 倒水后清零
+        self._save_state()
 
     def _apply_prediction_feedback(self, result: dict[str, Any], bias: dict[str, Any],
                                    now: datetime) -> None:
@@ -334,6 +397,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._run_start_h = d.get("run_start_h", 0.0)
         self._last_stop_h = d.get("last_stop_h", 0.0)
         self._rebound_done = set(d.get("rebound_done", []))
+        self._water_run_minutes = d.get("water_run_minutes", 0.0)
 
     def _save_state(self) -> None:
         data = {
@@ -343,6 +407,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "run_start_h": self._run_start_h,
             "last_stop_h": self._last_stop_h,
             "rebound_done": sorted(self._rebound_done),
+            "water_run_minutes": round(self._water_run_minutes, 2),
         }
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)
