@@ -1,6 +1,5 @@
 # 智能除湿引擎 —— 打包界面卡片(全插件实体,零配置即用)
-# 需 HACS 前端卡:Mushroom + button-card(集成会在「设置→修复」提示)。
-# 用法:仪表盘 → 编辑 → 添加卡片 → 手动(Manual)→ 粘贴本文件全部内容 → 保存。
+# 需 HACS 前端卡:Mushroom + button-card。用法:仪表盘→编辑→添加卡片→手动→粘贴。
 type: vertical-stack
 cards:
   # ---- 顶部:随湿度变色的大屏 ----
@@ -231,20 +230,82 @@ cards:
       {% set f = state_attr('sensor.smart_dehumidifier_learning_engine','water_fill_percent') | float(0) %}
       {{ 'red' if f >= 90 else 'orange' if f >= 50 else 'cyan' }}
     multiline_secondary: true
+  - type: custom:mushroom-number-card
+    entity: number.smart_dehumidifier_tank_capacity
+    name: 水箱容量
+    icon: mdi:cup-water
+    icon_color: cyan
+    display_mode: buttons
+  - type: custom:mushroom-template-card
+    primary: 倒水校准
+    secondary: 倒完水后,点一下"倒之前大概到哪个水位"
+    icon: mdi:cup-water-outline
+    icon_color: cyan
+    multiline_secondary: true
   - type: grid
-    columns: 2
+    columns: 5
     square: false
     cards:
-      - type: custom:mushroom-number-card
-        entity: number.smart_dehumidifier_tank_capacity
-        name: 水箱容量
-        icon: mdi:cup-water
-        icon_color: cyan
-      - type: custom:mushroom-select-card
-        entity: select.smart_dehumidifier_water_calibration
-        name: 倒水前水位(校准)
+      - type: custom:mushroom-template-card
+        primary: 空了
+        icon: mdi:cup-off-outline
+        icon_color: blue
+        layout: vertical
+        tap_action:
+          action: call-service
+          service: select.select_option
+          target:
+            entity_id: select.smart_dehumidifier_water_calibration
+          data:
+            option: 空了
+      - type: custom:mushroom-template-card
+        primary: 四分之一
         icon: mdi:cup-outline
         icon_color: cyan
+        layout: vertical
+        tap_action:
+          action: call-service
+          service: select.select_option
+          target:
+            entity_id: select.smart_dehumidifier_water_calibration
+          data:
+            option: 四分之一
+      - type: custom:mushroom-template-card
+        primary: 二分之一
+        icon: mdi:cup
+        icon_color: teal
+        layout: vertical
+        tap_action:
+          action: call-service
+          service: select.select_option
+          target:
+            entity_id: select.smart_dehumidifier_water_calibration
+          data:
+            option: 二分之一
+      - type: custom:mushroom-template-card
+        primary: 四分之三
+        icon: mdi:cup-water
+        icon_color: orange
+        layout: vertical
+        tap_action:
+          action: call-service
+          service: select.select_option
+          target:
+            entity_id: select.smart_dehumidifier_water_calibration
+          data:
+            option: 四分之三
+      - type: custom:mushroom-template-card
+        primary: 已满
+        icon: mdi:cup-water
+        icon_color: red
+        layout: vertical
+        tap_action:
+          action: call-service
+          service: select.select_option
+          target:
+            entity_id: select.smart_dehumidifier_water_calibration
+          data:
+            option: 已满
 
   # ---- 湿度趋势 ----
   - type: history-graph
