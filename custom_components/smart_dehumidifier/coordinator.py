@@ -11,11 +11,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from . import climate_math, ml_core, model, tank_model
+from . import appliances, climate_math, ml_core, model, tank_model
 from .const import (
+    APPLIANCES_LOG,
     AUTO_TRAIN_EVERY,
     CONF_DEHUMIDIFIER,
     CONF_ENABLE_MODEL,
+    CONF_EXTRA_APPLIANCES,
     CONF_HUMIDITY_SENSOR,
     CONF_MODE,
     CONF_TANK_CAPACITY,
@@ -65,6 +67,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._predictions_path = Path(hass.config.path(DATA_DIRNAME, PREDICTIONS_FILE))
         self._water_samples_path = Path(hass.config.path(DATA_DIRNAME, WATER_SAMPLES_FILE))
         self._water_run_minutes = 0.0  # 自上次倒水校准以来的累计运行分钟(持久化)
+        self._appliances_log_path = Path(hass.config.path(DATA_DIRNAME, APPLIANCES_LOG))
+        self._appliance_state: dict[str, dict[str, Any]] = {}  # 额外设备的在途运行状态(持久化)
         # 模型与检测状态在首个 executor 周期里懒加载,避免在事件循环里阻塞读文件
         self._model: dict[str, Any] | None = None
         self._model_loaded = False
@@ -112,9 +116,13 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         operating_mode = opts.get(CONF_MODE, DEFAULT_MODE)
         temp_entity = opts.get(CONF_TEMP_SENSOR, cfg.get(CONF_TEMP_SENSOR))
         temp_c = self._read_temp_c(temp_entity)
+        # 额外设备:在事件循环里读它们当前是否运行,交给 _compute 做循环检测+学习
+        extra = opts.get(CONF_EXTRA_APPLIANCES, []) or []
+        appliance_running = {eid: self._is_running_state(eid) for eid in extra}
 
         result = await self.hass.async_add_executor_job(
-            self._compute, humidity, target, running, enable_model, target_mode, temp_c, operating_mode
+            self._compute, humidity, target, running, enable_model, target_mode, temp_c,
+            operating_mode, appliance_running
         )
 
         # 接管控制(仅当总开关打开;湿度可用已在上面校验)。动作在事件循环里执行。
@@ -168,7 +176,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ---- executor 线程:文件 IO + 纯计算 --------------------------------------
     def _compute(self, humidity: float, target: float, running: bool, enable_model: bool,
-                 target_mode: str, temp_c: float | None, operating_mode: str = DEFAULT_MODE) -> dict[str, Any]:
+                 target_mode: str, temp_c: float | None, operating_mode: str = DEFAULT_MODE,
+                 appliance_running: dict[str, bool] | None = None) -> dict[str, Any]:
         now = datetime.now()
         scene = self._scene_for_now(now)
 
@@ -229,11 +238,54 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ---- 水箱预测:运行时累计"做功" → 学到的换算估当前水量 ----
         self._update_water(running, humidity, operating_mode, scene, result)
 
+        # ---- 多设备学习(只观察):额外设备的启停循环 → 学典型运行时长 ----
+        result["appliances"] = self._observe_appliances(now, appliance_running or {}, scene)
+
         self._update_count += 1
         if self._update_count % AUTO_TRAIN_EVERY == 0:
             self._maybe_train(runs, rebounds)
         result["model_status"] = model.status(self._model)
         return result
+
+    # ---- 多设备学习(只观察,不控制)---------------------------------------------
+    _APPLIANCE_OFF = {"off", "unavailable", "unknown", "idle", "standby", "none", "", None}
+
+    def _is_running_state(self, entity_id: str) -> bool:
+        state = self.hass.states.get(entity_id)
+        return bool(state and state.state not in self._APPLIANCE_OFF)
+
+    def _observe_appliances(self, now: datetime, running_map: dict[str, bool],
+                            scene: str) -> dict[str, Any]:
+        """对每台声明的额外设备做循环检测:on→off 记一条运行循环并学典型时长。"""
+        out: dict[str, Any] = {}
+        period = "night" if scene == "night" else ("day" if now.hour < 18 else "evening")
+        samples_all = ml_core.read_jsonl(self._appliances_log_path)
+        for eid, running in running_map.items():
+            st = self._appliance_state.setdefault(eid, {"running": running, "start_iso": None})
+            if running and not st["running"]:           # 开机
+                st["start_iso"] = now.isoformat()
+            elif not running and st["running"] and st.get("start_iso"):  # 关机 → 记一次循环
+                start = ml_core._parse_iso(st["start_iso"])
+                dur = max(int((now - start).total_seconds() / 60), 0) if start else 0
+                if dur > 0:
+                    ml_core.append_jsonl(self._appliances_log_path, {
+                        "entity": eid, "datetime": now.isoformat(),
+                        "duration_min": dur, "period": period, "scene": scene,
+                    }, max_lines=5000)
+                st["start_iso"] = None
+            st["running"] = running
+            mine = [s for s in samples_all if s.get("entity") == eid]
+            typical, layer = appliances.layered_estimate(
+                mine, key="duration_min", context={"period": period, "scene": scene},
+                layer_keys=("period", "scene"))
+            out[eid] = {
+                "is_running": running,
+                "cycles": len(mine),
+                "typical_duration_min": typical,
+                "estimate_source": layer,
+            }
+        self._save_state()
+        return out
 
     # ---- 水箱预测 ---------------------------------------------------------------
     def _tank_capacity(self) -> float:
@@ -398,6 +450,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._last_stop_h = d.get("last_stop_h", 0.0)
         self._rebound_done = set(d.get("rebound_done", []))
         self._water_run_minutes = d.get("water_run_minutes", 0.0)
+        self._appliance_state = d.get("appliance_state", {})
 
     def _save_state(self) -> None:
         data = {
@@ -408,6 +461,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_stop_h": self._last_stop_h,
             "rebound_done": sorted(self._rebound_done),
             "water_run_minutes": round(self._water_run_minutes, 2),
+            "appliance_state": self._appliance_state,
         }
         try:
             self._state_path.parent.mkdir(parents=True, exist_ok=True)

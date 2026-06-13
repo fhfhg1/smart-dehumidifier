@@ -40,6 +40,8 @@ MODEL_LATEST = "model_latest.json"
 STATE_FILE = "state.json"  # 事件检测的在途运行状态,跨重启持久化
 PREDICTIONS_FILE = "predictions.jsonl"  # live 预测日志,供预测误差反馈闭环
 WATER_SAMPLES_FILE = "water_samples.jsonl"  # 水箱校准样本(倒水反馈),供 tank_model 学习
+APPLIANCES_LOG = "appliances_log.jsonl"     # 其它家电的运行循环样本(只观察学习)
+CONF_EXTRA_APPLIANCES = "extra_appliances"  # 用户声明的额外要学习的设备实体(列表)
 
 # 水箱预测:容量(升)+ 倒水前水位校准选项
 CONF_TANK_CAPACITY = "tank_capacity"

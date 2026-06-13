@@ -27,6 +27,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     CONF_DEHUMIDIFIER,
     CONF_ENABLE_MODEL,
+    CONF_EXTRA_APPLIANCES,
     CONF_HUMIDITY_SENSOR,
     CONF_TARGET,
     CONF_TARGET_MODE,
@@ -104,6 +105,15 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
             ): BooleanSelector(),
             _opt_entity(CONF_TEMP_SENSOR): EntitySelector(
                 EntitySelectorConfig(domain=["sensor", "number", "input_number"])
+            ),
+            vol.Optional(
+                CONF_EXTRA_APPLIANCES,
+                default=defaults.get(CONF_EXTRA_APPLIANCES, []),
+            ): EntitySelector(
+                EntitySelectorConfig(
+                    domain=["switch", "fan", "humidifier", "climate", "binary_sensor", "input_boolean"],
+                    multiple=True,
+                )
             ),
         }
     )
@@ -234,5 +244,6 @@ class SmartDehumidifierOptionsFlow(OptionsFlow):
             CONF_TARGET_MODE: opts.get(CONF_TARGET_MODE, DEFAULT_TARGET_MODE),
             CONF_ENABLE_MODEL: opts.get(CONF_ENABLE_MODEL, DEFAULT_ENABLE_MODEL),
             CONF_TEMP_SENSOR: opts.get(CONF_TEMP_SENSOR, data.get(CONF_TEMP_SENSOR)),
+            CONF_EXTRA_APPLIANCES: opts.get(CONF_EXTRA_APPLIANCES, []),
         }
         return self.async_show_form(step_id="init", data_schema=_options_schema(defaults))
