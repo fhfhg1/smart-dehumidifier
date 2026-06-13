@@ -93,6 +93,46 @@ number/select 写入 config entry options → 触发重载;运行模式已接进
 (目标湿度 number、运行模式 select、自主控制 switch、训练服务、湿度变色大屏 + 趋势)。
 依赖 HACS:Mushroom + button-card(repair 提示)。
 
+## 5c. 学习内核 + 水箱 + 多设备(2026-06-13)
+
+- **学习内核升级**:`ml_core` 样本异常过滤(`_reject_outliers`)、预测误差反馈(`prediction_bias`
+  + coordinator `_apply_prediction_feedback` 修正预计启停时间/确认/最小运行/提前窗口);
+  `predictions.jsonl` live 预测日志;`model.py` 加 `humidity_gap`+月份特征(保留"优于启发式才接管")。
+- **水箱预测**:`number.*_tank_capacity` + `select.*_water_calibration`(倒水前水位)+ coordinator
+  累计运行分钟(持久化)→ `tank_model` 分层学"做功→升水"换算;每次倒水校准记样本+清零。
+  产出 `water_*` 属性,仪表盘有卡。
+- **多设备学习接口(只观察)**:`appliances.py` 声明式 Profile 注册表 + 通用分层估算;
+  options 里 `extra_appliances` 多选实体 → coordinator `_observe_appliances` 对每台做循环检测、
+  记 `appliances_log.jsonl`、学典型运行时长,产出 `appliances` 属性。**不碰除湿机控制。**
+  待扩展:每台额外设备的预测**实体/卡片**、按类型(电磁炉/炸锅)学预热/到温等专属量、加控制。
+
+⚠️ **运维教训**:手动重启 HA **不要** `bootout` 后用错 plist 路径——
+`$HOME/Library/LaunchAgents/local.homeassistant.core.plist` **不存在**,真正的在
+`<repo>/homeassistant.launchd.plist`。安全做法:服务在跑时用
+`launchctl kickstart -k gui/$(id -u)/local.homeassistant.core` 重启;若已 bootout,用
+`launchctl bootstrap gui/$(id -u) <repo>/homeassistant.launchd.plist` 恢复。本会话曾因此误致 HA 宕机。
+
+⚠️ **entity_id 区域前缀仍会偶发**:设备在区域「奥克兰」时,部分新实体被命名为
+`*.ao_ke_lan_smart_dehumidifier_*`(尽管 `has_entity_name=False`)。出现就停机改注册表 rename
+回干净 id(参考本会话对 humidity/target/mode/water_calibration 的处理)。根治仍待定。
+
+## 5d. 本地图标 + 仪表盘打包(2026-06-13)
+
+- **本地 brand 图标(HA 2026.3+,免 brands PR)**:在 `custom_components/<domain>/brand/` 放
+  `icon.png`(256)、`icon@2x.png`(512)、`logo.png`、`logo@2x.png`(+ `dark_*` 变体)即可,
+  **本地图标自动优先于 brands CDN,manifest 不用任何配置**。所以 brands 仓已不收自定义集成图标
+  (PR 会被自动关)。除湿机的 `brand/` 已就位。参考:
+  developers.home-assistant.io/blog/2026/02/24/brands-proxy-api
+- **打包仪表盘卡片必须是"单卡 mapping",不能是 YAML 列表**:
+  `lovelace/dashboard.yaml` 顶层要 `type: vertical-stack`(而非 `- type: vertical-stack`)。
+  列表会让"添加卡片→手动"粘贴或 `!include` 进卡槽时报**"配置错误"**。除湿机与台灯都踩过这个坑。
+- **侧栏仪表盘**:在 live `configuration.yaml` 的 `lovelace: dashboards:` 下加一段
+  `mode: yaml + title + icon + show_in_sidebar + filename`(指向 `ui-*.yaml`),重启生效。
+  ⚠️ 写 live `configuration.yaml` 属生产配置改动,自动审批可能拦截——让用户自己跑写入命令更稳。
+
+> 注:本仓另有一个**姊妹集成 `smart_desk_lamp`(智能台灯)**(同套自学习+自主控制+本地 brand 思路);
+> 其打包卡 `custom_components/smart_desk_lamp/lovelace/dashboard.yaml` 同样须是单卡 mapping。
+
 ## 6. 剩余路线(→ HA 质量等级 silver/gold)
 
 - [ ] `tests/` + GitHub CI(pytest + HA 测试框架,覆盖 config flow / coordinator / model);`hassfest`、`ruff`/`mypy`。
