@@ -111,7 +111,8 @@ def _options_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                 default=defaults.get(CONF_EXTRA_APPLIANCES, []),
             ): EntitySelector(
                 EntitySelectorConfig(
-                    domain=["switch", "fan", "humidifier", "climate", "binary_sensor", "input_boolean"],
+                    domain=["switch", "fan", "humidifier", "climate", "binary_sensor",
+                            "input_boolean", "sensor"],
                     multiple=True,
                 )
             ),

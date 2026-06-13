@@ -248,11 +248,20 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return result
 
     # ---- 多设备学习(只观察,不控制)---------------------------------------------
-    _APPLIANCE_OFF = {"off", "unavailable", "unknown", "idle", "standby", "none", "", None}
+    # 视为"未运行/空闲"的状态(含烹饪类设备的待机/保温/完成等),其余视为运行中
+    _APPLIANCE_OFF = {
+        "off", "unavailable", "unknown", "none", "",
+        "idle", "standby", "shutdown", "shut_down", "waiting", "appointment", "scheduled",
+        "paused", "pause", "keepwarm", "keep_warm", "warm",
+        "finished", "finish", "done", "complete", "completed", "stopped", "stop", "cancel",
+        "待机", "空闲", "关机", "预约", "暂停", "保温", "完成", "已完成", "停止",
+    }
 
     def _is_running_state(self, entity_id: str) -> bool:
         state = self.hass.states.get(entity_id)
-        return bool(state and state.state not in self._APPLIANCE_OFF)
+        if state is None or state.state is None:
+            return False
+        return state.state.strip().lower() not in self._APPLIANCE_OFF  # 大小写不敏感
 
     def _observe_appliances(self, now: datetime, running_map: dict[str, bool],
                             scene: str) -> dict[str, Any]:
