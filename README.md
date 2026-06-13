@@ -34,6 +34,18 @@
 
 - `custom_components/smart_dehumidifier/lovelace/dashboard.yaml`
 
+## 品牌图标
+
+插件已内置 Home Assistant 官方推荐的本地图标资源：
+
+- `custom_components/smart_dehumidifier/brand/icon.png`
+- `custom_components/smart_dehumidifier/brand/dark_icon.png`
+- `custom_components/smart_dehumidifier/brand/logo.png`
+- `custom_components/smart_dehumidifier/brand/dark_logo.png`
+
+从 Home Assistant 2026.3 开始，这些图片会通过本地 `brands` API 自动代理显示，
+不需要再单独提交到外部 brands 仓库。
+
 ## 前端依赖
 
 当前界面依赖以下 HACS 前端卡片：

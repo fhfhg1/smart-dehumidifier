@@ -32,6 +32,7 @@
 - `ml_core.py` 自学习引擎(从 `tools/smart_dehumidifier_ml.py` 打包,纯标准库)
 - `sensor.py` 暴露引擎结果的实体
 - `const.py` / `strings.json` / `translations/`
+- `brand/` 本地图标与 logo（Home Assistant 2026.3+ 会通过本地 brands API 自动代理）
 
 ## 0.2.0 新增(通用性/健壮性 · UX/i18n · ML 生命周期)
 
