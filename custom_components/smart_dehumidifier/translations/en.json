@@ -25,7 +25,11 @@
           "update_interval": "Update interval (seconds)",
           "target_mode": "Target mode",
           "enable_model": "Use the local self-learning model when it beats the heuristic",
-          "temperature_sensor": "Temperature sensor (optional)"
+          "temperature_sensor": "Temperature sensor (optional)",
+          "extra_appliances": "Extra appliances to learn"
+        },
+        "data_description": {
+          "extra_appliances": "Pick each appliance's status/cooking sensor (e.g. work_status, cooking_status), not its power switch — many power switches read 'on' while idle and would look like it's always running."
         }
       }
     }

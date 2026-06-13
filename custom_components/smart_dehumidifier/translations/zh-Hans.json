@@ -25,7 +25,11 @@
           "update_interval": "更新周期(秒)",
           "target_mode": "目标模式",
           "enable_model": "当本地模型比启发式更准时启用它",
-          "temperature_sensor": "温度传感器(可留空)"
+          "temperature_sensor": "温度传感器(可留空)",
+          "extra_appliances": "额外要一起学习的设备"
+        },
+        "data_description": {
+          "extra_appliances": "建议选设备的「状态/烹饪传感器」(如 work_status、cooking_status),不要选电源开关——很多电源开关待机时也显示「开」,会被误判成一直在运行。"
         }
       }
     }
