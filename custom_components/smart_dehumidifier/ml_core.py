@@ -278,6 +278,19 @@ def build_structured_samples(source: Path) -> tuple[list[dict[str, Any]], list[d
     return runs, rebounds, snapshots
 
 
+def _reject_outliers(values: list[float]) -> list[float]:
+    """用中位数 ± 3*MAD 剔除极端样本,避免一两次异常运行把均值带偏。
+    样本 <5 时不过滤(数据太少,宁可全留)。"""
+    if len(values) < 5:
+        return values
+    med = median(values)
+    mad = median([abs(v - med) for v in values]) or 0.0
+    if mad == 0:
+        return values
+    kept = [v for v in values if abs(v - med) <= 3.0 * mad]
+    return kept if len(kept) >= 3 else values
+
+
 def filter_samples(
     samples: list[dict[str, Any]],
     *,
@@ -287,15 +300,15 @@ def filter_samples(
 ) -> tuple[list[float], str]:
     exact = [sample for sample in samples if sample.get("scene") == scene and sample.get("mode") == mode and sample.get(key, 0) > 0]
     if len(exact) >= MIN_SAMPLES_PER_GROUP:
-        return [float(sample[key]) for sample in exact], "场景+模式"
+        return _reject_outliers([float(sample[key]) for sample in exact]), "场景+模式"
     by_scene = [sample for sample in samples if sample.get("scene") == scene and sample.get(key, 0) > 0]
     if len(by_scene) >= MIN_SAMPLES_PER_GROUP:
-        return [float(sample[key]) for sample in by_scene], "场景"
+        return _reject_outliers([float(sample[key]) for sample in by_scene]), "场景"
     by_mode = [sample for sample in samples if sample.get("mode") == mode and sample.get(key, 0) > 0]
     if len(by_mode) >= MIN_SAMPLES_PER_GROUP:
-        return [float(sample[key]) for sample in by_mode], "模式"
+        return _reject_outliers([float(sample[key]) for sample in by_mode]), "模式"
     fallback = [float(sample[key]) for sample in samples if sample.get(key, 0) > 0]
-    return fallback, "全局"
+    return _reject_outliers(fallback), "全局"
 
 
 def coefficient_of_variation(values: list[float]) -> float:
@@ -892,6 +905,38 @@ def actual_events_from_runs(runs: list[dict[str, Any]]) -> tuple[list[datetime],
     stops.sort()
     starts.sort()
     return starts, stops
+
+
+def prediction_bias(predictions: list[dict[str, Any]], runs: list[dict[str, Any]],
+                    horizon_min: int = 360) -> dict[str, Any]:
+    """预测误差反馈:对比历史"预测的开/关机时间 vs 实际发生时间",
+    返回有符号的平均偏差(分钟,正=实际比预测晚)。用近 30 条预测做窗口。
+    """
+    starts, stops = actual_events_from_runs(runs)
+    stop_err: list[float] = []
+    start_err: list[float] = []
+    for pred in predictions[-200:]:
+        pt = _parse_iso(pred.get("prediction_time"))
+        if pt is None:
+            continue
+        ps = _parse_iso(pred.get("predicted_stop_at"))
+        if ps is not None:
+            actual = next((s for s in stops if s >= pt), None)
+            if actual is not None and (actual - pt).total_seconds() / 60 <= horizon_min:
+                stop_err.append((actual - ps).total_seconds() / 60.0)
+        pn = _parse_iso(pred.get("predicted_next_start_at"))
+        if pn is not None:
+            actual = next((s for s in starts if s >= pt), None)
+            if actual is not None and (actual - pt).total_seconds() / 60 <= horizon_min:
+                start_err.append((actual - pn).total_seconds() / 60.0)
+    recent_stop = stop_err[-30:]
+    recent_start = start_err[-30:]
+    return {
+        "stop_bias_min": round(mean(recent_stop), 1) if recent_stop else None,
+        "start_bias_min": round(mean(recent_start), 1) if recent_start else None,
+        "n_stop": len(recent_stop),
+        "n_start": len(recent_start),
+    }
 
 
 def _first_after(events: list[datetime], after: datetime) -> datetime | None:

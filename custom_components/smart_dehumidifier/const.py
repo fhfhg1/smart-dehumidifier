@@ -38,6 +38,7 @@ DATA_DIRNAME = "smart_dehumidifier"
 LEARNING_CSV = "learning.csv"
 MODEL_LATEST = "model_latest.json"
 STATE_FILE = "state.json"  # 事件检测的在途运行状态,跨重启持久化
+PREDICTIONS_FILE = "predictions.jsonl"  # live 预测日志,供预测误差反馈闭环
 
 # ML 生命周期
 MIN_SAMPLES_TO_TRAIN = 40       # 任一速率样本达到才训练

@@ -27,7 +27,8 @@ _ENGINE_ATTRS = (
     "control_takeover_summary", "anomaly_level", "anomaly_summary",
     "external_advice", "external_start_bias", "predictor",
     "dew_point_c", "mold_risk_level", "effective_target",
-    "control_enabled", "control_action", "last_control_action", "last_sync",
+    "control_enabled", "control_action", "last_control_action",
+    "prediction_bias", "last_sync",
 )
 
 

@@ -33,6 +33,7 @@ from .const import (
     LOW_PROTECT_DELTA,
     MIN_SAMPLES_TO_TRAIN,
     MODEL_LATEST,
+    PREDICTIONS_FILE,
     STATE_FILE,
     TARGET_MODE_MOLD,
     UNAVAILABLE_STATES,
@@ -56,6 +57,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._csv_path = Path(hass.config.path(DATA_DIRNAME, LEARNING_CSV))
         self._model_path = Path(hass.config.path(DATA_DIRNAME, MODEL_LATEST))
         self._state_path = Path(hass.config.path(DATA_DIRNAME, STATE_FILE))
+        self._predictions_path = Path(hass.config.path(DATA_DIRNAME, PREDICTIONS_FILE))
         # 模型与检测状态在首个 executor 周期里懒加载,避免在事件循环里阻塞读文件
         self._model: dict[str, Any] | None = None
         self._model_loaded = False
@@ -209,11 +211,44 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result["start_threshold_applied"] = round(self._start_threshold_for_now(now, target, result), 1)
         result["is_night_window"] = scene == "night"
 
+        # ---- 预测误差反馈闭环 ----
+        # 1) 用历史预测(原始引擎输出)对比实际启停,得到时间偏差;
+        # 2) 把本次"原始预测"落盘(供下次度量);3) 用偏差修正展示/决策用的预测时间与若干倒计时。
+        bias = ml_core.prediction_bias(ml_core.read_jsonl(self._predictions_path), runs)
+        ml_core.log_prediction(self._predictions_path, context, result)
+        result["prediction_bias"] = bias
+        self._apply_prediction_feedback(result, bias, now)
+
         self._update_count += 1
         if self._update_count % AUTO_TRAIN_EVERY == 0:
             self._maybe_train(runs, rebounds)
         result["model_status"] = model.status(self._model)
         return result
+
+    def _apply_prediction_feedback(self, result: dict[str, Any], bias: dict[str, Any],
+                                   now: datetime) -> None:
+        """用历史预测偏差动态修正本次输出(就地改 result)。
+        正偏差=实际比预测晚 → 顺延对应预计时间;并据此轻推确认/最小运行/提前窗口。"""
+        sb = bias.get("stop_bias_min")
+        stb = bias.get("start_bias_min")
+        if sb is not None and result.get("predicted_stop_minutes") is not None:
+            m = max(int(round(result["predicted_stop_minutes"] + sb)), 0)
+            result["predicted_stop_minutes"] = m
+            result["predicted_stop_time"] = (now + timedelta(minutes=m)).strftime("%H:%M:%S")
+            # 关机总体偏晚(sb>0):说明降湿比预期慢 → 关机确认略放宽、最小运行略增
+            if sb > 5:
+                result["stop_confirm_minutes"] = ml_core.clamp(result.get("stop_confirm_minutes", 5) + 1, 2, 8)
+                result["min_runtime_minutes"] = ml_core.clamp(result.get("min_runtime_minutes", 30) + 2, 18, 45)
+        if stb is not None and result.get("predicted_next_start_minutes") is not None:
+            m = max(int(round(result["predicted_next_start_minutes"] + stb)), 0)
+            result["predicted_next_start_minutes"] = m
+            result["predicted_next_start_time"] = (now + timedelta(minutes=m)).strftime("%H:%M:%S")
+            # 开机偏晚(stb>0=实际比预测晚→我们开早了):缩短提前窗口、开机确认略增
+            if stb > 5:
+                result["auto_start_window"] = ml_core.clamp(result.get("auto_start_window", 20) - 3, 5, 45)
+                result["start_confirm_minutes"] = ml_core.clamp(result.get("start_confirm_minutes", 5) + 1, 2, 8)
+            elif stb < -5:  # 开机偏早不足(实际比预测早→我们开晚了):加大提前窗口
+                result["auto_start_window"] = ml_core.clamp(result.get("auto_start_window", 20) + 3, 5, 45)
 
     def _decide_action(self, now: datetime, humidity: float, target: float,
                        running: bool, result: dict[str, Any]) -> str | None:

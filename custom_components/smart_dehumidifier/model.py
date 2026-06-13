@@ -31,13 +31,24 @@ def _hour_of(sample: dict[str, Any]) -> float:
     return dt.hour + dt.minute / 60.0 if dt else 12.0
 
 
+def _month_of(sample: dict[str, Any]) -> int:
+    dt = ml_core._parse_iso(sample.get("datetime")) or ml_core.parse_time(sample.get("timestamp"))
+    return dt.month if dt else 6
+
+
 def _features(sample: dict[str, Any], spec: dict[str, Any]) -> list[float]:
     hour = _hour_of(sample)
+    month = _month_of(sample)
+    start_h = float(sample.get("start_humidity", 0) or 0)
+    target = float(sample.get("target_humidity", 60) or 60)
     feats = [
-        float(sample.get("start_humidity", 0) or 0),
-        float(sample.get("target_humidity", 60) or 60),
+        start_h,
+        target,
+        start_h - target,                       # humidity_gap:离目标多远,直接影响降湿/回潮
         math.sin(2 * math.pi * hour / 24.0),
         math.cos(2 * math.pi * hour / 24.0),
+        math.sin(2 * math.pi * month / 12.0),   # 月份周期:季节性(回南天/梅雨 vs 干燥季)
+        math.cos(2 * math.pi * month / 12.0),
     ]
     feats += [1.0 if str(sample.get("scene", "")) == sc else 0.0 for sc in spec["scenes"]]
     feats += [1.0 if str(sample.get("mode", "")) == md else 0.0 for md in spec["modes"]]
