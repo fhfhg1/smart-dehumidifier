@@ -204,6 +204,11 @@ def build_structured_samples(source: Path) -> tuple[list[dict[str, Any]], list[d
             season = data.get("season", "")
             weather = data.get("weather", "")
             period = data.get("period", "")
+            target_humidity = as_float(data, "target")
+            if target_humidity <= 0:
+                target_humidity = as_float(data, "target_humidity", 0.0)
+            if target_humidity <= 0:
+                target_humidity = 60.0
 
             if event in RUN_EVENTS and "duration_min" in data:
                 sample = {
@@ -217,7 +222,7 @@ def build_structured_samples(source: Path) -> tuple[list[dict[str, Any]], list[d
                     "period": period,
                     "start_humidity": as_float(data, "start_h"),
                     "end_humidity": as_float(data, "end_h"),
-                    "target_humidity": as_float(data, "target"),
+                    "target_humidity": target_humidity,
                     "duration_min": as_int(data, "duration_min"),
                     "drop_amount": as_float(data, "drop"),
                     "drop_rate": as_float(data, "drop_rate"),
@@ -246,6 +251,7 @@ def build_structured_samples(source: Path) -> tuple[list[dict[str, Any]], list[d
                     "period": period,
                     "start_humidity": start_humidity,
                     "end_humidity": end_humidity,
+                    "target_humidity": target_humidity,
                     "elapsed_min": elapsed_min,
                     "sample_window_min": REBOUND_EVENTS[event],
                     "rebound_rate": rebound_rate,
@@ -264,7 +270,7 @@ def build_structured_samples(source: Path) -> tuple[list[dict[str, Any]], list[d
                     "state": data.get("state", ""),
                     "running": data.get("running", ""),
                     "humidity": as_float(data, "humidity"),
-                    "target_humidity": as_float(data, "target"),
+                    "target_humidity": target_humidity,
                     "drop_rate": as_float(data, "drop_rate"),
                     "rebound_rate": as_float(data, "rebound_rate"),
                     "confidence": data.get("confidence", ""),
@@ -861,6 +867,7 @@ def log_prediction(path: Path, context: PredictionContext, result: dict[str, Any
         "scene": context.scene,
         "mode": context.mode,
         "confidence": result.get("prediction_confidence"),
+        "predictor": result.get("predictor"),
         "humidity": context.humidity,
         "target": context.target,
         "start_threshold": context.start_threshold,

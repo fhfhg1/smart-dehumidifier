@@ -77,10 +77,17 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._prev_running: bool | None = None
         self._run_start_time: datetime | None = None
         self._run_start_h: float = 0.0
+        self._run_start_target: float = 0.0
+        self._run_start_mode: str = DEFAULT_MODE
+        self._run_start_scene: str = "normal"
         self._last_stop_time: datetime | None = None
         self._last_stop_h: float = 0.0
+        self._last_stop_target: float = 0.0
+        self._last_stop_mode: str = DEFAULT_MODE
+        self._last_stop_scene: str = "normal"
         self._rebound_done: set[int] = set()
         self._update_count = 0
+        self._humidity_trace: list[dict[str, Any]] = []
         # 接管控制(由 switch 实体置位;默认关 = 仅建议,装好不会突然抢控制)
         self.control_enabled = False
         self.last_control_action: str | None = None
@@ -179,7 +186,6 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                  target_mode: str, temp_c: float | None, operating_mode: str = DEFAULT_MODE,
                  appliance_running: dict[str, bool] | None = None) -> dict[str, Any]:
         now = datetime.now()
-        scene = self._scene_for_now(now)
 
         if not self._model_loaded or not self._state_loaded:
             self._initialize_sync()
@@ -191,15 +197,19 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if target_mode == TARGET_MODE_MOLD:
             target = float(min(user_target, climate_math.mold_safe_target(temp_c)))
 
-        self._detect_events(now, humidity, target, running)
-        self._append(now, self._snapshot_line(now, humidity, target, running))
+        self._record_humidity_trace(now, humidity, target, running, operating_mode)
+        scene = self._classify_scene(now, humidity, target, running, operating_mode)
+        current_drop_rate = self._current_drop_rate(now, humidity)
+        current_rebound_rate = self._current_rebound_rate(now, humidity)
 
+        self._detect_events(now, humidity, target, running, operating_mode, scene)
         runs, rebounds, snapshots = ml_core.build_structured_samples(self._csv_path)
 
         drop_override = rebound_override = None
         if enable_model and self._model:
             sample = {"scene": scene, "mode": operating_mode, "start_humidity": humidity,
-                      "target_humidity": target, "datetime": now.isoformat()}
+                      "target_humidity": target, "datetime": now.isoformat(),
+                      "season": self._season_for_now(now), "period": self._period_for_now(now)}
             drop_override = model.predict_rate(self._model, "drop_rate", sample)
             rebound_override = model.predict_rate(self._model, "rebound_rate", sample)
 
@@ -208,7 +218,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         context = ml_core.PredictionContext(
             humidity=humidity, target=target, scene=scene, mode=operating_mode,
             state="running" if running else "off", running=running,
-            current_drop_rate=0.0, current_rebound_rate=0.0,
+            current_drop_rate=current_drop_rate, current_rebound_rate=current_rebound_rate,
             start_threshold=target + initial_start_offset, min_runtime_left=0, now=now,
         )
         result = ml_core.compute_predictions(
@@ -223,9 +233,25 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result["target_humidity"] = round(target, 1)
         result["configured_target_humidity"] = round(user_target, 1)
         result["is_running"] = running
+        result["current_drop_rate_live"] = round(current_drop_rate, 3)
+        result["current_rebound_rate_live"] = round(current_rebound_rate, 3)
         result["control_action"] = self._decide_action(now, humidity, target, running, result)
         result["start_threshold_applied"] = round(self._start_threshold_for_now(now, target, result), 1)
         result["is_night_window"] = scene == "night"
+        self._append(
+            now,
+            self._snapshot_line(
+                now,
+                humidity,
+                target,
+                running,
+                operating_mode,
+                scene,
+                current_drop_rate,
+                current_rebound_rate,
+                result.get("prediction_confidence", "low"),
+            ),
+        )
 
         # ---- 预测误差反馈闭环 ----
         # 1) 用历史预测(原始引擎输出)对比实际启停,得到时间偏差;
@@ -338,11 +364,20 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             rate = liters_before / self._water_run_minutes
             now = datetime.now()
             mode = self.entry.options.get(CONF_MODE, DEFAULT_MODE)
+            humidity = self._read_float(self.entry.data.get(CONF_HUMIDITY_SENSOR) or "")
+            if humidity is None:
+                humidity = self._read_attr_float(self.entry.data[CONF_DEHUMIDIFIER], "current_humidity") or 60.0
             sample = {
                 "datetime": now.isoformat(),
                 "mode": mode,
-                "scene": self._scene_for_now(now),
-                "humidity_bucket": tank_model.humidity_bucket(self._read_float(self.entry.data.get(CONF_HUMIDITY_SENSOR) or "") or 60),
+                "scene": self._classify_scene(
+                    now,
+                    float(humidity),
+                    float(self.entry.options.get(CONF_TARGET, self.entry.data.get(CONF_TARGET, DEFAULT_TARGET))),
+                    bool(self._prev_running),
+                    mode,
+                ),
+                "humidity_bucket": tank_model.humidity_bucket(float(humidity)),
                 "rate": round(rate, 5),
             }
             ml_core.append_jsonl(self._water_samples_path, sample, max_lines=2000)
@@ -402,6 +437,85 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return "night"
         return "normal"
 
+    @staticmethod
+    def _period_for_now(now: datetime) -> str:
+        if now.hour < _NIGHT_END_HOUR:
+            return "night"
+        if now.hour < 18:
+            return "day"
+        return "evening"
+
+    @staticmethod
+    def _season_for_now(now: datetime) -> str:
+        if now.month in (12, 1, 2):
+            return "summer"
+        if now.month in (3, 4, 5):
+            return "autumn"
+        if now.month in (6, 7, 8):
+            return "winter"
+        return "spring"
+
+    def _record_humidity_trace(self, now: datetime, humidity: float, target: float,
+                               running: bool, mode: str) -> None:
+        self._humidity_trace.append(
+            {
+                "time": now,
+                "humidity": float(humidity),
+                "target": float(target),
+                "running": bool(running),
+                "mode": mode,
+            }
+        )
+        cutoff = now - timedelta(hours=2)
+        self._humidity_trace = [row for row in self._humidity_trace if row["time"] >= cutoff]
+
+    def _trace_rate(self, now: datetime, minutes: int) -> float | None:
+        if not self._humidity_trace:
+            return None
+        cutoff = now - timedelta(minutes=minutes)
+        candidate = next((row for row in self._humidity_trace if row["time"] >= cutoff), None)
+        if candidate is None:
+            candidate = self._humidity_trace[0]
+        current = self._humidity_trace[-1]
+        elapsed = max((current["time"] - candidate["time"]).total_seconds() / 60.0, 1.0)
+        return (float(current["humidity"]) - float(candidate["humidity"])) / elapsed
+
+    def _current_drop_rate(self, now: datetime, humidity: float) -> float:
+        if self._run_start_time is None or not self._prev_running:
+            return 0.0
+        elapsed = max((now - self._run_start_time).total_seconds() / 60.0, 1.0)
+        return round(max(self._run_start_h - humidity, 0.0) / elapsed, 3)
+
+    def _current_rebound_rate(self, now: datetime, humidity: float) -> float:
+        if self._last_stop_time is None or self._prev_running:
+            return 0.0
+        elapsed = max((now - self._last_stop_time).total_seconds() / 60.0, 1.0)
+        return round(max(humidity - self._last_stop_h, 0.0) / elapsed, 3)
+
+    def _classify_scene(self, now: datetime, humidity: float, target: float,
+                        running: bool, mode: str) -> str:
+        baseline = self._scene_for_now(now)
+        rise_10m = self._trace_rate(now, 10)
+        rise_15m = self._trace_rate(now, 15)
+        rise_60m = self._trace_rate(now, 60)
+        live_drop = self._current_drop_rate(now, humidity)
+
+        if rise_10m is not None and rise_10m >= 0.8:
+            return "shower_spike"
+        if rise_15m is not None and rise_15m >= (10.0 / 15.0):
+            return "shower_spike"
+        if mode == "drying":
+            return "drying_clothes"
+        if running and self._run_start_time is not None:
+            run_minutes = (now - self._run_start_time).total_seconds() / 60.0
+            if run_minutes >= 30 and humidity >= max(target + 5, 65) and live_drop < 0.08:
+                return "drying_clothes"
+            if run_minutes >= 15 and humidity >= target + 2 and live_drop < 0.05:
+                return "window_open_suspected"
+        if rise_60m is not None and rise_60m >= 0.12 and humidity >= max(target + 5, 65):
+            return "rainy_high_humidity"
+        return baseline
+
     def _start_threshold_for_now(self, now: datetime, target: float, result: dict[str, Any]) -> float:
         bias = result.get("external_start_bias", 0) or 0
         is_night = self._scene_for_now(now) == "night"
@@ -411,26 +525,43 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return target + float(offset) + float(bias)
 
     # ---- 事件检测:把启停/回潮转成训练样本 ------------------------------------
-    def _detect_events(self, now: datetime, humidity: float, target: float, running: bool) -> None:
+    def _detect_events(self, now: datetime, humidity: float, target: float, running: bool,
+                       mode: str, scene: str) -> None:
         if self._prev_running is None:
             self._prev_running = running
             return
         if running and not self._prev_running:  # 开机
             self._run_start_time, self._run_start_h = now, humidity
-            scene = self._scene_for_now(now)
-            self._append(now, f"{self._ts(now)},start_auto,scene={scene},mode=comfort,"
-                              f"humidity={round(humidity,1)},target={int(target)},reason=auto")
+            self._run_start_target = target
+            self._run_start_mode = mode
+            self._run_start_scene = scene
+            self._append(
+                now,
+                f"{self._ts(now)},start_auto,scene={scene},mode={mode},"
+                f"season={self._season_for_now(now)},period={self._period_for_now(now)},"
+                f"humidity={round(humidity,1)},target={round(target,1)},reason=auto",
+            )
         elif not running and self._prev_running:  # 关机 → 记录一次运行
             if self._run_start_time:
                 dur = max(int((now - self._run_start_time).total_seconds() / 60), 1)
                 drop = round(self._run_start_h - humidity, 1)
                 rate = round(drop / dur, 3) if dur > 0 else 0
                 event = "stop_low_protect" if humidity <= target - LOW_PROTECT_DELTA else "stop_target"
-                scene = self._scene_for_now(self._run_start_time)
-                self._append(now, f"{self._ts(now)},{event},scene={scene},start_h={round(self._run_start_h,1)},"
-                                  f"end_h={round(humidity,1)},duration_min={dur},drop={drop},"
-                                  f"drop_rate={max(rate,0)},mode=comfort")
+                run_scene = self._run_start_scene or scene
+                run_mode = self._run_start_mode or mode
+                run_target = self._run_start_target or target
+                self._append(
+                    now,
+                    f"{self._ts(now)},{event},scene={run_scene},mode={run_mode},"
+                    f"season={self._season_for_now(self._run_start_time)},period={self._period_for_now(self._run_start_time)},"
+                    f"start_h={round(self._run_start_h,1)},end_h={round(humidity,1)},target={round(run_target,1)},"
+                    f"duration_min={dur},drop={drop},drop_rate={max(rate,0)},"
+                    f"reason={'low_protect' if event == 'stop_low_protect' else 'target_reached'}",
+                )
             self._last_stop_time, self._last_stop_h = now, humidity
+            self._last_stop_target = self._run_start_target or target
+            self._last_stop_mode = self._run_start_mode or mode
+            self._last_stop_scene = self._run_start_scene or scene
             self._rebound_done = set()
         elif not running and self._last_stop_time is not None:  # 回潮采样
             elapsed = int((now - self._last_stop_time).total_seconds() / 60)
@@ -438,10 +569,16 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if w not in self._rebound_done and elapsed >= w:
                     self._rebound_done.add(w)
                     rate = round((humidity - self._last_stop_h) / elapsed, 3) if elapsed > 0 else 0
-                    scene = self._scene_for_now(self._last_stop_time)
-                    self._append(now, f"{self._ts(now)},rebound_{w}m,scene={scene},"
-                                      f"start_h={round(self._last_stop_h,1)},humidity={round(humidity,1)},"
-                                      f"elapsed_min={elapsed},rebound_rate={max(rate,0)}")
+                    rebound_scene = self._last_stop_scene or scene
+                    rebound_mode = self._last_stop_mode or mode
+                    rebound_target = self._last_stop_target or target
+                    self._append(
+                        now,
+                        f"{self._ts(now)},rebound_{w}m,scene={rebound_scene},mode={rebound_mode},"
+                        f"season={self._season_for_now(self._last_stop_time)},period={self._period_for_now(self._last_stop_time)},"
+                        f"start_h={round(self._last_stop_h,1)},humidity={round(humidity,1)},target={round(rebound_target,1)},"
+                        f"elapsed_min={elapsed},rebound_rate={max(rate,0)},reason=rebound_tracking",
+                    )
         self._prev_running = running
         self._save_state()
 
@@ -456,7 +593,13 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._run_start_time = datetime.fromisoformat(rs) if rs else None
         self._last_stop_time = datetime.fromisoformat(ls) if ls else None
         self._run_start_h = d.get("run_start_h", 0.0)
+        self._run_start_target = d.get("run_start_target", 0.0)
+        self._run_start_mode = d.get("run_start_mode", DEFAULT_MODE)
+        self._run_start_scene = d.get("run_start_scene", "normal")
         self._last_stop_h = d.get("last_stop_h", 0.0)
+        self._last_stop_target = d.get("last_stop_target", 0.0)
+        self._last_stop_mode = d.get("last_stop_mode", DEFAULT_MODE)
+        self._last_stop_scene = d.get("last_stop_scene", "normal")
         self._rebound_done = set(d.get("rebound_done", []))
         self._water_run_minutes = d.get("water_run_minutes", 0.0)
         self._appliance_state = d.get("appliance_state", {})
@@ -467,7 +610,13 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "run_start_time": self._run_start_time.isoformat() if self._run_start_time else None,
             "last_stop_time": self._last_stop_time.isoformat() if self._last_stop_time else None,
             "run_start_h": self._run_start_h,
+            "run_start_target": self._run_start_target,
+            "run_start_mode": self._run_start_mode,
+            "run_start_scene": self._run_start_scene,
             "last_stop_h": self._last_stop_h,
+            "last_stop_target": self._last_stop_target,
+            "last_stop_mode": self._last_stop_mode,
+            "last_stop_scene": self._last_stop_scene,
             "rebound_done": sorted(self._rebound_done),
             "water_run_minutes": round(self._water_run_minutes, 2),
             "appliance_state": self._appliance_state,
@@ -500,11 +649,14 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _ts(now: datetime) -> str:
         return now.strftime("%Y-%m-%dT%H:%M:%S")
 
-    def _snapshot_line(self, now: datetime, humidity: float, target: float, running: bool) -> str:
-        scene = self._scene_for_now(now)
-        return (f"{self._ts(now)},snapshot,scene={scene},mode=comfort,"
+    def _snapshot_line(self, now: datetime, humidity: float, target: float, running: bool,
+                       mode: str, scene: str, drop_rate: float, rebound_rate: float,
+                       confidence: str) -> str:
+        return (f"{self._ts(now)},snapshot,scene={scene},mode={mode},"
+                f"season={self._season_for_now(now)},period={self._period_for_now(now)},"
                 f"state={'running' if running else 'off'},running={'on' if running else 'off'},"
-                f"humidity={round(humidity,1)},target={int(target)},drop_rate=0,rebound_rate=0,confidence=low")
+                f"humidity={round(humidity,1)},target={round(target,1)},"
+                f"drop_rate={round(drop_rate,3)},rebound_rate={round(rebound_rate,3)},confidence={confidence}")
 
     def _append(self, now: datetime, line: str) -> None:
         self._csv_path.parent.mkdir(parents=True, exist_ok=True)

@@ -50,8 +50,10 @@ def _features(sample: dict[str, Any], spec: dict[str, Any]) -> list[float]:
         math.sin(2 * math.pi * month / 12.0),   # 月份周期:季节性(回南天/梅雨 vs 干燥季)
         math.cos(2 * math.pi * month / 12.0),
     ]
-    feats += [1.0 if str(sample.get("scene", "")) == sc else 0.0 for sc in spec["scenes"]]
-    feats += [1.0 if str(sample.get("mode", "")) == md else 0.0 for md in spec["modes"]]
+    feats += [1.0 if str(sample.get("scene", "")) == sc else 0.0 for sc in spec.get("scenes", [])]
+    feats += [1.0 if str(sample.get("mode", "")) == md else 0.0 for md in spec.get("modes", [])]
+    feats += [1.0 if str(sample.get("season", "")) == ss else 0.0 for ss in spec.get("seasons", [])]
+    feats += [1.0 if str(sample.get("period", "")) == pp else 0.0 for pp in spec.get("periods", [])]
     return feats
 
 
@@ -121,8 +123,12 @@ def train(runs: list[dict[str, Any]], rebounds: list[dict[str, Any]], alpha: flo
         return None
     out: dict[str, Any] = {"version": time.strftime("%Y%m%d-%H%M%S"), "alpha": alpha, "models": {}}
     for name, samples, key in (("drop_rate", runs, "drop_rate"), ("rebound_rate", rebounds, "rebound_rate")):
-        spec = {"scenes": sorted({str(s.get("scene", "")) for s in samples}),
-                "modes": sorted({str(s.get("mode", "")) for s in samples})}
+        spec = {
+            "scenes": sorted({str(s.get("scene", "")) for s in samples}),
+            "modes": sorted({str(s.get("mode", "")) for s in samples}),
+            "seasons": sorted({str(s.get("season", "")) for s in samples if s.get("season")}),
+            "periods": sorted({str(s.get("period", "")) for s in samples if s.get("period")}),
+        }
         X, y, _ = _matrix(samples, key, spec)
         cv = _cv(samples, key, spec, alpha)
         if len(y) < 4:
