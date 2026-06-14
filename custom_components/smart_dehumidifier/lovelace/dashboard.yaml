@@ -32,7 +32,8 @@ cards:
       chips: >-
         [[[
           const e = states['sensor.smart_dehumidifier_learning_engine']?.attributes || {};
-          const conf = e.prediction_confidence_cn || '低';
+          // 可信度跟随当前展示的预测:除湿中看关机预测、待机看开机预测(开机本就更难,会偏低)
+          const conf = (e.is_running ? e.stop_confidence_cn : e.start_confidence_cn) || e.prediction_confidence_cn || '低';
           const pred = e.predictor === 'model' ? '本地模型' : '规则';
           const ctrl = states['switch.smart_dehumidifier_autonomous_control']?.state === 'on' ? '已接管' : '仅建议';
           return `${pred} · 可信度${conf} · ${ctrl}`;

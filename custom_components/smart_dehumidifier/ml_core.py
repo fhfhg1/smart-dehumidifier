@@ -633,6 +633,13 @@ def compute_predictions(
     final_confidence = confidence_drop if order[confidence_drop] <= order[confidence_rebound] else confidence_rebound
     confidence_reason = f"下降样本 {len(drop_values)} 条（{drop_scope}），回潮样本 {len(rebound_values)} 条（{rebound_scope}）。{reason_drop}；{reason_rebound}。"
 
+    # 拆分关机/开机置信度:关机预测由下降率驱动、开机预测由回潮率驱动,二者精度差别很大,
+    # 用同一个标签会误导。backtest 实测开机 MAE(≈42min)远大于关机(≈15min),所以在用
+    # 滚动实测 MAE 正式校准(步骤②)之前,开机置信度封顶为 medium,不对外显示"高"。
+    stop_confidence = confidence_drop
+    start_confidence = "medium" if confidence_rebound == "high" else confidence_rebound
+    _conf_cn = {"high": "高", "medium": "中", "low": "低"}
+
     scene_sample_count = max(len(drop_values), len(rebound_values))
     strong_learning = scene_sample_count >= 5 and final_confidence in {"medium", "high"}
     mature_learning = scene_sample_count >= 8 and final_confidence == "high"
@@ -962,8 +969,12 @@ def compute_predictions(
         "drop_source_scope": drop_scope,
         "rebound_source_scope": rebound_scope,
         "prediction_confidence": final_confidence,
-        "prediction_confidence_cn": {"high": "高", "medium": "中", "low": "低"}[final_confidence],
+        "prediction_confidence_cn": _conf_cn[final_confidence],
         "prediction_confidence_reason": confidence_reason,
+        "stop_confidence": stop_confidence,
+        "stop_confidence_cn": _conf_cn[stop_confidence],
+        "start_confidence": start_confidence,
+        "start_confidence_cn": _conf_cn[start_confidence],
         "predicted_stop_time": predicted_stop_time,
         "predicted_stop_minutes": predicted_stop_minutes,
         "predicted_next_start_time": predicted_start_time,
