@@ -891,15 +891,18 @@ def compute_predictions(
         predicted_stop_minutes = max(context.min_runtime_left, 0)
         predicted_stop_time = (context.now + timedelta(minutes=predicted_stop_minutes)).strftime("%H:%M:%S")
 
+    external_start_bias, external_advice = compute_external_advice(context)
+    # 开机预测用的阈值要和实际控制阈值(_start_threshold_for_now 已加同一偏置)保持一致,
+    # 否则"预计开机时间"会和真实开机时机对不上。
+    effective_start_threshold = context.start_threshold + external_start_bias
+
     predicted_start_minutes: int | None = None
     predicted_start_time = "--"
-    if not context.running and context.humidity < context.start_threshold and effective_rebound > 0.01:
-        humidity_gap = max(context.start_threshold - context.humidity, 0)
+    if not context.running and context.humidity < effective_start_threshold and effective_rebound > 0.01:
+        humidity_gap = max(effective_start_threshold - context.humidity, 0)
         minutes_to_line = math.ceil(humidity_gap / effective_rebound)
         predicted_start_minutes = max(minutes_to_line - auto_window, 0)
         predicted_start_time = (context.now + timedelta(minutes=predicted_start_minutes)).strftime("%H:%M:%S")
-
-    external_start_bias, external_advice = compute_external_advice(context)
 
     learning_state = "已建立可训练样本集" if (len(runs) + len(rebounds)) >= 6 else "正在积累样本"
     trend = "除湿中" if context.running else ("回潮较快" if effective_rebound >= 0.08 else "缓慢回潮" if effective_rebound >= 0.03 else "环境稳定")

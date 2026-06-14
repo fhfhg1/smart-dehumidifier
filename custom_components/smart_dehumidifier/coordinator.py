@@ -126,10 +126,13 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 额外设备:在事件循环里读它们当前是否运行,交给 _compute 做循环检测+学习
         extra = opts.get(CONF_EXTRA_APPLIANCES, []) or []
         appliance_running = {eid: self._is_running_state(eid) for eid in extra}
+        # 室外湿度:读插件约定实体(可由 override 指向天气/任意湿度源)。室外高湿时引擎会
+        # 提前开机抵御进湿;读不到则为 None,不参与决策。在事件循环里读、传进 _compute。
+        outdoor_humidity = self._read_float("sensor.smart_dehumidifier_outdoor_humidity")
 
         result = await self.hass.async_add_executor_job(
             self._compute, humidity, target, running, enable_model, target_mode, temp_c,
-            operating_mode, appliance_running
+            operating_mode, appliance_running, outdoor_humidity
         )
 
         # 接管控制(仅当总开关打开;湿度可用已在上面校验)。动作在事件循环里执行。
@@ -184,7 +187,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ---- executor 线程:文件 IO + 纯计算 --------------------------------------
     def _compute(self, humidity: float, target: float, running: bool, enable_model: bool,
                  target_mode: str, temp_c: float | None, operating_mode: str = DEFAULT_MODE,
-                 appliance_running: dict[str, bool] | None = None) -> dict[str, Any]:
+                 appliance_running: dict[str, bool] | None = None,
+                 outdoor_humidity: float | None = None) -> dict[str, Any]:
         now = datetime.now()
 
         if not self._model_loaded or not self._state_loaded:
@@ -224,6 +228,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             current_drop_rate=current_drop_rate, current_rebound_rate=current_rebound_rate,
             start_threshold=target + initial_start_offset, min_runtime_left=0, now=now,
             rebound_age_minutes=rebound_age_minutes,
+            outdoor_humidity=outdoor_humidity,
         )
         result = ml_core.compute_predictions(
             runs, rebounds, snapshots, context,
