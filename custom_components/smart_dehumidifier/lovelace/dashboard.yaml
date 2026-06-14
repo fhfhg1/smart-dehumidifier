@@ -138,9 +138,9 @@ cards:
       {% set runs = state_attr(e,'dataset_runs') or 0 %}
       {% set rebounds = state_attr(e,'dataset_rebounds') or 0 %}
       {{ state_attr(e,'readiness_summary') or '仍在积累关键样本，当前以观察和建议为主。' }}
-      \n除湿 {{ state_attr(e,'effective_drop_rate') or 0 }} · 回潮 {{ state_attr(e,'effective_rebound_rate') or 0 }} %/分
+      {{ '\n' }}除湿 {{ state_attr(e,'effective_drop_rate') or 0 }} · 回潮 {{ state_attr(e,'effective_rebound_rate') or 0 }} %/分
       · 最小运行 {{ state_attr(e,'min_runtime_minutes') or 30 }} 分 · 锁定 {{ state_attr(e,'lockout_minutes') or 45 }} 分
-      \n下一步：{{ state_attr(e,'next_milestone') or '继续积累运行和回潮样本。' }}
+      {{ '\n' }}下一步：{{ state_attr(e,'next_milestone') or '继续积累运行和回潮样本。' }}
     icon: mdi:brain
     icon_color: purple
     multiline_secondary: true
@@ -201,10 +201,10 @@ cards:
       （{{ state_attr(e,'model_drop_samples') or 0 }} 条）
       · 回潮模型：{{ '已可用' if state_attr(e,'model_rebound_active') else '学习中' }}
       （{{ state_attr(e,'model_rebound_samples') or 0 }} 条）
-      \n最近关机偏差：{% if state_attr(e,'recent_stop_bias_min') is not none %}{{ state_attr(e,'recent_stop_bias_min') }} 分钟 / {{ state_attr(e,'recent_stop_bias_samples') or 0 }} 次{% else %}样本不足{% endif %}
+      {{ '\n' }}最近关机偏差：{% if state_attr(e,'recent_stop_bias_min') is not none %}{{ state_attr(e,'recent_stop_bias_min') }} 分钟 / {{ state_attr(e,'recent_stop_bias_samples') or 0 }} 次{% else %}样本不足{% endif %}
       · 最近开机偏差：{% if state_attr(e,'recent_start_bias_min') is not none %}{{ state_attr(e,'recent_start_bias_min') }} 分钟 / {{ state_attr(e,'recent_start_bias_samples') or 0 }} 次{% else %}样本不足{% endif %}
-      \n{{ state_attr(e,'rebound_takeover_rule') or '回潮接管条件尚未建立。' }}
-      \n当前状态：{{ state_attr(e,'rebound_takeover_blockers') or '正在评估中' }}
+      {{ '\n' }}{{ state_attr(e,'rebound_takeover_rule') or '回潮接管条件尚未建立。' }}
+      {{ '\n' }}当前状态：{{ state_attr(e,'rebound_takeover_blockers') or '正在评估中' }}
     icon: mdi:clipboard-data-outline
     icon_color: >-
       {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
@@ -219,7 +219,7 @@ cards:
     secondary: >-
       {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
       {{ state_attr(e,'rebound_takeover_summary') or '当前仍以固定规则为主。' }}
-      \n{% if state_attr(e,'rebound_warmup_active') %}
+      {{ '\n' }}{% if state_attr(e,'rebound_warmup_active') %}
         停机预热中，已停 {{ state_attr(e,'rebound_warmup_minutes') or 0 }} 分钟，回潮预测会先偏向历史样本。
       {% else %}
         {{ state_attr(e,'start_gate_status_cn') or '按阈值等待' }}
@@ -244,7 +244,7 @@ cards:
         secondary: >-
           {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
           已满足
-          \n{{ state_attr(e,'rebound_takeover_met_items') or '暂未满足' }}
+          {{ '\n' }}{{ state_attr(e,'rebound_takeover_met_items') or '暂未满足' }}
         icon: mdi:check-decagram-outline
         icon_color: green
         multiline_secondary: true
@@ -255,7 +255,7 @@ cards:
         secondary: >-
           {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
           还差多少
-          \n{{ state_attr(e,'rebound_takeover_missing_items') or state_attr(e,'rebound_takeover_gap_summary') or '无' }}
+          {{ '\n' }}{{ state_attr(e,'rebound_takeover_missing_items') or state_attr(e,'rebound_takeover_gap_summary') or '无' }}
         icon: mdi:progress-clock
         icon_color: amber
         multiline_secondary: true
@@ -272,7 +272,7 @@ cards:
         secondary: >-
           {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
           当前是否允许接管
-          \n{{ state_attr(e,'rebound_takeover_state_cn') or '固定规则主控' }}
+          {{ '\n' }}{{ state_attr(e,'rebound_takeover_state_cn') or '固定规则主控' }}
         icon: mdi:swap-horizontal-circle-outline
         icon_color: >-
           {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
@@ -288,8 +288,8 @@ cards:
       {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
       过度除湿风险：{{ {'low':'低','medium':'中','high':'高'}.get(state_attr(e,'overdry_risk_level'),'低') }}
       · {{ state_attr(e,'overdry_risk_summary') or '当前未发现明显过度除湿风险。' }}
-      \n异常诊断：{{ state_attr(e,'anomaly_title') or '状态稳定' }} · {{ state_attr(e,'anomaly_summary') or '当前没有发现明显异常。' }}
-      \n建议：{{ state_attr(e,'anomaly_actions') or '继续按当前模式运行即可。' }}
+      {{ '\n' }}异常诊断：{{ state_attr(e,'anomaly_title') or '状态稳定' }} · {{ state_attr(e,'anomaly_summary') or '当前没有发现明显异常。' }}
+      {{ '\n' }}建议：{{ state_attr(e,'anomaly_actions') or '继续按当前模式运行即可。' }}
     icon: mdi:stethoscope
     icon_color: >-
       {% set lvl = state_attr('sensor.smart_dehumidifier_learning_engine','anomaly_level') %}
