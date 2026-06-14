@@ -259,6 +259,10 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         bias = ml_core.prediction_bias(ml_core.read_jsonl(self._predictions_path), runs)
         ml_core.log_prediction(self._predictions_path, context, result)
         result["prediction_bias"] = bias
+        result["recent_stop_bias_min"] = bias.get("stop_bias_min")
+        result["recent_start_bias_min"] = bias.get("start_bias_min")
+        result["recent_stop_bias_samples"] = bias.get("n_stop", 0)
+        result["recent_start_bias_samples"] = bias.get("n_start", 0)
         self._apply_prediction_feedback(result, bias, now)
 
         # ---- 水箱预测:运行时累计"做功" → 学到的换算估当前水量 ----
@@ -267,10 +271,40 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # ---- 多设备学习(只观察):额外设备的启停循环 → 学典型运行时长 ----
         result["appliances"] = self._observe_appliances(now, appliance_running or {}, scene)
 
+        outcomes = ml_core.compute_outcomes(runs)
+        result["short_cycle_rate"] = outcomes.get("short_cycle_rate")
+        result["over_dry_rate"] = outcomes.get("over_dry_rate")
+
         self._update_count += 1
         if self._update_count % AUTO_TRAIN_EVERY == 0:
             self._maybe_train(runs, rebounds)
-        result["model_status"] = model.status(self._model)
+        model_status = model.status(self._model)
+        result["model_status"] = model_status
+        drop_model = (model_status.get("models") or {}).get("drop_rate") or {}
+        rebound_model = (model_status.get("models") or {}).get("rebound_rate") or {}
+        result["model_drop_active"] = bool(drop_model.get("active"))
+        result["model_rebound_active"] = bool(rebound_model.get("active"))
+        result["model_drop_samples"] = drop_model.get("n", 0)
+        result["model_rebound_samples"] = rebound_model.get("n", 0)
+
+        rebound_takeover_rule = "回潮接管条件：样本≥18，模型误差优于启发式，最近启动偏差≤12分钟，短循环率≤15%。"
+        blockers: list[str] = []
+        if not result["model_rebound_active"]:
+            blockers.append("回潮模型尚未优于启发式")
+        if int(result.get("model_rebound_samples") or 0) < 18:
+            blockers.append("回潮样本还不够")
+        start_bias = result.get("recent_start_bias_min")
+        start_bias_n = int(result.get("recent_start_bias_samples") or 0)
+        if start_bias is None or start_bias_n < 12:
+            blockers.append("启动偏差样本还不足")
+        elif abs(float(start_bias)) > 12:
+            blockers.append("最近启动预测偏差仍偏大")
+        short_cycle_rate = result.get("short_cycle_rate")
+        if short_cycle_rate is not None and float(short_cycle_rate) > 0.15:
+            blockers.append("短循环率偏高")
+        result["rebound_takeover_ready"] = not blockers
+        result["rebound_takeover_rule"] = rebound_takeover_rule
+        result["rebound_takeover_blockers"] = "；".join(blockers) if blockers else "已满足回潮模型接管条件，可进入小范围验证。"
         return result
 
     # ---- 多设备学习(只观察,不控制)---------------------------------------------

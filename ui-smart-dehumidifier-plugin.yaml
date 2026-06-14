@@ -198,6 +198,27 @@ views:
                 layout: vertical
 
           - type: custom:mushroom-template-card
+            primary: 模型评估
+            secondary: >-
+              {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+              下降模型：{{ '已可用' if state_attr(e,'model_drop_active') else '学习中' }}
+              （{{ state_attr(e,'model_drop_samples') or 0 }} 条）
+              · 回潮模型：{{ '已可用' if state_attr(e,'model_rebound_active') else '学习中' }}
+              （{{ state_attr(e,'model_rebound_samples') or 0 }} 条）
+              \n最近关机偏差：{% if state_attr(e,'recent_stop_bias_min') is not none %}{{ state_attr(e,'recent_stop_bias_min') }} 分钟 / {{ state_attr(e,'recent_stop_bias_samples') or 0 }} 次{% else %}样本不足{% endif %}
+              · 最近开机偏差：{% if state_attr(e,'recent_start_bias_min') is not none %}{{ state_attr(e,'recent_start_bias_min') }} 分钟 / {{ state_attr(e,'recent_start_bias_samples') or 0 }} 次{% else %}样本不足{% endif %}
+              \n{{ state_attr(e,'rebound_takeover_rule') or '回潮接管条件尚未建立。' }}
+              \n当前状态：{{ state_attr(e,'rebound_takeover_blockers') or '正在评估中' }}
+            icon: mdi:clipboard-data-outline
+            icon_color: >-
+              {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+              {% if state_attr(e,'rebound_takeover_ready') %} green
+              {% elif state_attr(e,'model_drop_active') or state_attr(e,'model_rebound_active') %} teal
+              {% else %} blue-grey
+              {% endif %}
+            multiline_secondary: true
+
+          - type: custom:mushroom-template-card
             primary: 环境与健康
             secondary: >-
               {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
