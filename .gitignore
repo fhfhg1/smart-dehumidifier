@@ -6,3 +6,11 @@ hass.launchd.*.log
 __pycache__/
 *.pyc
 .DS_Store
+
+# 个人/草稿配置与备份(可能含密钥:syncthing/transmission/frontend.user_data 等),勿入库
+*work
+*.notifyfix
+
+# 第三方/二进制,勿入库
+HA Remote/
+HA Remote.app/
