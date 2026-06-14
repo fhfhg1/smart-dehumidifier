@@ -234,6 +234,8 @@ def build_structured_samples(source: Path) -> tuple[list[dict[str, Any]], list[d
                     "drop_amount": as_float(data, "drop"),
                     "drop_rate": as_float(data, "drop_rate"),
                     "alpha": as_float(data, "alpha"),
+                    "outdoor_humidity": as_float(data, "outdoor_humidity", -999.0),
+                    "outdoor_temp": as_float(data, "outdoor_temp", -999.0),
                     "reason": data.get("reason", ""),
                     "datetime": ts.isoformat() if ts else "",
                 }
@@ -263,6 +265,8 @@ def build_structured_samples(source: Path) -> tuple[list[dict[str, Any]], list[d
                     "sample_window_min": REBOUND_EVENTS[event],
                     "rebound_rate": rebound_rate,
                     "alpha": as_float(data, "alpha"),
+                    "outdoor_humidity": as_float(data, "outdoor_humidity", -999.0),
+                    "outdoor_temp": as_float(data, "outdoor_temp", -999.0),
                     "datetime": ts.isoformat() if ts else "",
                 }
                 rebounds.append(sample)

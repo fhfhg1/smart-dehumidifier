@@ -230,14 +230,17 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not running and self._last_stop_time is not None:
             rebound_age_minutes = round(max((now - self._last_stop_time).total_seconds() / 60.0, 0.0), 2)
 
-        self._detect_events(now, humidity, target, running, operating_mode, scene)
+        self._detect_events(now, humidity, target, running, operating_mode, scene,
+                            outdoor_humidity, outdoor_temperature)
         runs, rebounds, snapshots = ml_core.build_structured_samples(self._csv_path)
 
         drop_override = rebound_override = None
         if enable_model and self._model:
             sample = {"scene": scene, "mode": operating_mode, "start_humidity": humidity,
                       "target_humidity": target, "datetime": now.isoformat(),
-                      "season": self._season_for_now(now), "period": self._period_for_now(now)}
+                      "season": self._season_for_now(now), "period": self._period_for_now(now),
+                      "outdoor_humidity": outdoor_humidity if outdoor_humidity is not None else -999,
+                      "outdoor_temp": outdoor_temperature if outdoor_temperature is not None else -999}
             drop_override = model.predict_rate(self._model, "drop_rate", sample)
             rebound_override = model.predict_rate(self._model, "rebound_rate", sample)
 
@@ -791,7 +794,13 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ---- 事件检测:把启停/回潮转成训练样本 ------------------------------------
     def _detect_events(self, now: datetime, humidity: float, target: float, running: bool,
-                       mode: str, scene: str) -> None:
+                       mode: str, scene: str,
+                       outdoor_humidity: float | None = None,
+                       outdoor_temperature: float | None = None) -> None:
+        # 室外温湿度作为 run/rebound 样本字段记录,供回潮/下降模型当特征(缺则留空,解析回退占位)。
+        oh = "" if outdoor_humidity is None else round(outdoor_humidity, 1)
+        ot = "" if outdoor_temperature is None else round(outdoor_temperature, 1)
+        outdoor = f",outdoor_humidity={oh},outdoor_temp={ot}"
         if self._prev_running is None:
             self._prev_running = running
             return
@@ -820,7 +829,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f"{self._ts(now)},{event},scene={run_scene},mode={run_mode},"
                     f"season={self._season_for_now(self._run_start_time)},period={self._period_for_now(self._run_start_time)},"
                     f"start_h={round(self._run_start_h,1)},end_h={round(humidity,1)},target={round(run_target,1)},"
-                    f"duration_min={dur},drop={drop},drop_rate={max(rate,0)},"
+                    f"duration_min={dur},drop={drop},drop_rate={max(rate,0)}{outdoor},"
                     f"reason={'low_protect' if event == 'stop_low_protect' else 'target_reached'}",
                 )
             self._last_stop_time, self._last_stop_h = now, humidity
@@ -842,7 +851,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         f"{self._ts(now)},rebound_{w}m,scene={rebound_scene},mode={rebound_mode},"
                         f"season={self._season_for_now(self._last_stop_time)},period={self._period_for_now(self._last_stop_time)},"
                         f"start_h={round(self._last_stop_h,1)},humidity={round(humidity,1)},target={round(rebound_target,1)},"
-                        f"elapsed_min={elapsed},rebound_rate={max(rate,0)},reason=rebound_tracking",
+                        f"elapsed_min={elapsed},rebound_rate={max(rate,0)}{outdoor},reason=rebound_tracking",
                     )
         self._prev_running = running
         self._save_state()

@@ -41,6 +41,8 @@ def _features(sample: dict[str, Any], spec: dict[str, Any]) -> list[float]:
     month = _month_of(sample)
     start_h = float(sample.get("start_humidity", 0) or 0)
     target = float(sample.get("target_humidity", 60) or 60)
+    oh = float(sample.get("outdoor_humidity", -999) or -999)   # 室外湿度,缺失=-999
+    ot = float(sample.get("outdoor_temp", -999) or -999)       # 室外温度,缺失=-999
     feats = [
         start_h,
         target,
@@ -49,6 +51,8 @@ def _features(sample: dict[str, Any], spec: dict[str, Any]) -> list[float]:
         math.cos(2 * math.pi * hour / 24.0),
         math.sin(2 * math.pi * month / 12.0),   # 月份周期:季节性(回南天/梅雨 vs 干燥季)
         math.cos(2 * math.pi * month / 12.0),
+        oh if oh >= 0 else 70.0,                 # 室外湿度:外湿越高回潮越快;缺失插补中性 70
+        ot if ot > -50 else 20.0,                # 室外温度:季节/换气代理;缺失插补中性 20
     ]
     feats += [1.0 if str(sample.get("scene", "")) == sc else 0.0 for sc in spec.get("scenes", [])]
     feats += [1.0 if str(sample.get("mode", "")) == md else 0.0 for md in spec.get("modes", [])]
@@ -150,7 +154,10 @@ def predict_rate(bundle: dict[str, Any], name: str, sample: dict[str, Any]) -> f
     ml_mae, h_mae = cv.get("ml_mae"), cv.get("heuristic_mae")
     if ml_mae is None or h_mae is None or ml_mae > h_mae:
         return None  # 模型没更准 → 不接管
-    pred = _predict(entry["model"], _features(sample, entry["spec"]))
+    feats = _features(sample, entry["spec"])
+    if len(feats) != len(entry["model"].get("mu", [])):
+        return None  # 特征 schema 变了、模型还没按新特征重训 → 回退启发式(下次自动训练后恢复)
+    pred = _predict(entry["model"], feats)
     return max(round(pred, 4), 0.0)
 
 
