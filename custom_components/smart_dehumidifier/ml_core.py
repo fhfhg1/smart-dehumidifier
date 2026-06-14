@@ -86,6 +86,13 @@ OVERDRY_MARGIN = 5.0    # 停机时 end_humidity 低于 target 这么多 → 过
 # ~每 15 分钟一条 → 8000 条约覆盖 80+ 天。
 PREDICTIONS_MAX_LINES = 8000
 
+# 停机后的最初几分钟,瞬时回潮率很容易被一次采样抬高。
+# 这里在回潮预热期内自动降低对实时回潮率的信任,让预测先贴近历史学习值。
+REBOUND_WARMUP_MINUTES = 8.0
+REBOUND_WARMUP_MIN_WEIGHT = 0.18
+REBOUND_WARMUP_MAX_LEARNED_MULTIPLIER = 1.6
+REBOUND_WARMUP_ABS_BONUS_CAP = 0.05
+
 
 def parse_time(value: str | None) -> datetime | None:
     if not value:
@@ -366,6 +373,113 @@ def classify_anomaly(
     return "normal", "当前未发现明显异常，设备与环境表现基本正常。"
 
 
+def build_anomaly_report(
+    runs: list[dict[str, Any]],
+    rebounds: list[dict[str, Any]],
+    context: "PredictionContext",
+    effective_drop: float,
+    effective_rebound: float,
+    outcomes: dict[str, Any] | None = None,
+    bias: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """输出可直接给前端展示的第一版异常诊断结果。"""
+    outcomes = outcomes or {}
+    bias = bias or {}
+
+    recent_runs = [sample for sample in runs if sample.get("drop_rate", 0) > 0][-6:]
+    older_runs = [sample for sample in runs[:-6] if sample.get("drop_rate", 0) > 0]
+    recent_rebounds = [sample for sample in rebounds if sample.get("rebound_rate", 0) > 0][-6:]
+    older_rebounds = [sample for sample in rebounds[:-6] if sample.get("rebound_rate", 0) > 0]
+
+    recent_run_avg = average_rate(recent_runs, "drop_rate")
+    older_run_avg = average_rate(older_runs, "drop_rate")
+    recent_rebound_avg = average_rate(recent_rebounds, "rebound_rate")
+    older_rebound_avg = average_rate(older_rebounds, "rebound_rate")
+
+    short_cycle_rate = outcomes.get("short_cycle_rate") or 0.0
+    over_dry_rate = outcomes.get("over_dry_rate") or 0.0
+    start_bias = abs(float(bias.get("start_bias_min") or 0.0))
+    stop_bias = abs(float(bias.get("stop_bias_min") or 0.0))
+    start_bias_n = int(bias.get("n_start") or 0)
+    stop_bias_n = int(bias.get("n_stop") or 0)
+
+    recent_over_dry = 0
+    recent_window = [sample for sample in runs if sample.get("target_humidity") is not None][-8:]
+    for sample in recent_window:
+        try:
+            end_h = float(sample.get("end_humidity"))
+            tgt = float(sample.get("target_humidity"))
+        except (TypeError, ValueError):
+            continue
+        if end_h < tgt - OVERDRY_MARGIN:
+            recent_over_dry += 1
+    recent_over_dry_rate = round(recent_over_dry / len(recent_window), 3) if recent_window else 0.0
+
+    if recent_over_dry_rate >= 0.35 or (over_dry_rate >= 0.40 and recent_over_dry_rate >= 0.20):
+        return {
+            "anomaly_level": "warning",
+            "anomaly_code": "overdry_frequent",
+            "anomaly_title": "过度除湿偏多",
+            "anomaly_summary": "最近多次停机时湿度低于目标较多，系统已收紧最小运行时长并更早考虑关机。",
+            "anomaly_actions": "建议继续观察 2-3 次运行；若仍偏干，可适当提高目标湿度或缩短干衣时长。",
+        }
+    if len(recent_runs) >= 3 and older_run_avg > 0 and recent_run_avg < older_run_avg * 0.6:
+        return {
+            "anomaly_level": "warning",
+            "anomaly_code": "efficiency_drop",
+            "anomaly_title": "除湿效率下降",
+            "anomaly_summary": "最近几次除湿速度明显慢于历史水平，可能存在滤网积灰、摆放不佳或房间持续进湿。",
+            "anomaly_actions": "建议检查滤网、机器周围通风和门窗状态；若在晾衣或雨天，这属于可接受现象。",
+        }
+    if len(recent_rebounds) >= 3 and older_rebound_avg > 0 and recent_rebound_avg > older_rebound_avg * 1.5:
+        return {
+            "anomaly_level": "warning",
+            "anomaly_code": "rebound_fast",
+            "anomaly_title": "回潮速度异常快",
+            "anomaly_summary": "关机后的湿度回升速度显著快于历史，系统会提前下一次开机窗口并缩短锁定期。",
+            "anomaly_actions": "建议检查门窗、外部天气和持续湿源；若正在洗澡后或下雨天，这种变化会更明显。",
+        }
+    if context.scene == "window_open_suspected":
+        return {
+            "anomaly_level": "notice",
+            "anomaly_code": "window_open_suspected",
+            "anomaly_title": "疑似开窗或持续进湿",
+            "anomaly_summary": "当前湿度下降异常缓慢，系统怀疑房间存在开窗、门缝或持续进湿。",
+            "anomaly_actions": "建议先检查门窗再观察 1-2 次运行结果；这段时间系统会避免过于激进地除湿。",
+        }
+    if short_cycle_rate and short_cycle_rate >= 0.2:
+        return {
+            "anomaly_level": "notice",
+            "anomaly_code": "short_cycle_risk",
+            "anomaly_title": "短循环风险偏高",
+            "anomaly_summary": "最近停机后较快再次启动的比例偏高，系统将优先延长锁定期并保守处理提前开机。",
+            "anomaly_actions": "建议继续积累更多回潮样本；若夜间频繁启动，可切换到节能模式观察。",
+        }
+    if (start_bias_n >= 8 and start_bias >= 15) or (stop_bias_n >= 8 and stop_bias >= 12):
+        return {
+            "anomaly_level": "notice",
+            "anomaly_code": "prediction_drift",
+            "anomaly_title": "预测偏差偏大",
+            "anomaly_summary": "近期预测和实际启停时间偏差仍较明显，系统会继续累积样本并暂缓扩大模型接管范围。",
+            "anomaly_actions": "建议继续运行几轮，优先补齐当前场景下的运行和回潮样本。",
+        }
+    if effective_rebound >= 0.10:
+        return {
+            "anomaly_level": "notice",
+            "anomaly_code": "fast_rebound_notice",
+            "anomaly_title": "当前环境回潮较快",
+            "anomaly_summary": "当前环境回潮速度偏快，系统已提高提前开机倾向，尽量避免房间重新进入潮湿区。",
+            "anomaly_actions": "这是环境类提醒，不一定是故障；若近期天气潮湿，属于正常响应。",
+        }
+    return {
+        "anomaly_level": "normal",
+        "anomaly_code": "healthy",
+        "anomaly_title": "状态稳定",
+        "anomaly_summary": "当前没有发现明显异常，设备效率、回潮速度和启停节奏都在正常范围内。",
+        "anomaly_actions": "继续按当前模式运行即可，系统会持续记录样本并优化参数。",
+    }
+
+
 # 外部环境开机偏置:正=更不爱开机,负=更早开机。每条规则仅在对应输入可用时生效。
 EXTERNAL_BIAS_MIN = -3
 EXTERNAL_BIAS_MAX = 10
@@ -413,6 +527,7 @@ class PredictionContext:
     start_threshold: float
     min_runtime_left: int
     now: datetime
+    rebound_age_minutes: float | None = None
     # 外部环境(均可选,None/空 = 该传感器未配置或不可用 → 不参与决策)
     window_open: bool | None = None
     presence: str | None = None      # home / away / unknown
@@ -432,6 +547,46 @@ def blend_rate(current_rate: float, learned_rate: float, sample_count: int) -> f
     if current_rate > 0:
         return round(current_rate, 3)
     return round(learned_rate, 3)
+
+
+def damp_rebound_rate(
+    current_rate: float,
+    learned_rate: float,
+    sample_count: int,
+    rebound_age_minutes: float | None,
+) -> tuple[float, dict[str, Any]]:
+    raw_blend = blend_rate(current_rate, learned_rate, sample_count)
+    details: dict[str, Any] = {
+        "effective_rebound_rate_raw_blend": raw_blend,
+        "effective_rebound_rate_damped": raw_blend,
+        "rebound_warmup_active": False,
+        "rebound_warmup_minutes": round(float(rebound_age_minutes), 2) if rebound_age_minutes is not None else None,
+        "rebound_warmup_progress": None,
+    }
+    if rebound_age_minutes is None or rebound_age_minutes >= REBOUND_WARMUP_MINUTES or current_rate <= 0:
+        return raw_blend, details
+
+    progress = max(0.0, min(1.0, rebound_age_minutes / REBOUND_WARMUP_MINUTES))
+    current_weight = max(REBOUND_WARMUP_MIN_WEIGHT, progress)
+    learned_anchor = learned_rate if learned_rate > 0 else raw_blend
+
+    if learned_anchor > 0:
+        damped = (learned_anchor * (1 - current_weight)) + (current_rate * current_weight)
+        cap = max(
+            learned_anchor * REBOUND_WARMUP_MAX_LEARNED_MULTIPLIER,
+            learned_anchor + REBOUND_WARMUP_ABS_BONUS_CAP,
+        )
+        damped = min(damped, cap, raw_blend)
+    else:
+        damped = current_rate * current_weight
+
+    damped = round(max(damped, 0.0), 3)
+    details.update({
+        "effective_rebound_rate_damped": damped,
+        "rebound_warmup_active": True,
+        "rebound_warmup_progress": round(progress, 3),
+    })
+    return damped, details
 
 
 def classify_confidence(sample_count: int, cv: float, source_scope: str) -> tuple[str, str]:
@@ -463,7 +618,12 @@ def compute_predictions(
     learned_rebound = round(learned_rebound_override if learned_rebound_override is not None
                             else exponential_weighted_average(rebound_values), 3)
     effective_drop = blend_rate(context.current_drop_rate, learned_drop, len(drop_values))
-    effective_rebound = blend_rate(context.current_rebound_rate, learned_rebound, len(rebound_values))
+    effective_rebound, rebound_warmup = damp_rebound_rate(
+        context.current_rebound_rate,
+        learned_rebound,
+        len(rebound_values),
+        context.rebound_age_minutes,
+    )
 
     drop_cv = coefficient_of_variation(drop_values)
     rebound_cv = coefficient_of_variation(rebound_values)
@@ -478,6 +638,30 @@ def compute_predictions(
     mature_learning = scene_sample_count >= 8 and final_confidence == "high"
     drop_model_ready = len(drop_values) >= 12 and final_confidence in {"medium", "high"}
     rebound_model_ready = len(rebound_values) >= 18 and final_confidence == "high"
+
+    run_outcomes = compute_outcomes(runs)
+    over_dry_rate = float(run_outcomes.get("over_dry_rate") or 0.0)
+    short_cycle_rate = float(run_outcomes.get("short_cycle_rate") or 0.0)
+    recent_runs = [sample for sample in runs if sample.get("target_humidity") is not None][-8:]
+    recent_over_dry = 0
+    for sample in recent_runs:
+        try:
+            end_h = float(sample.get("end_humidity"))
+            tgt = float(sample.get("target_humidity"))
+        except (TypeError, ValueError):
+            continue
+        if end_h < tgt - OVERDRY_MARGIN:
+            recent_over_dry += 1
+    recent_over_dry_rate = round(recent_over_dry / len(recent_runs), 3) if recent_runs else 0.0
+
+    overdry_risk_level = "low"
+    overdry_risk_summary = "当前未发现明显过度除湿风险。"
+    if recent_over_dry_rate >= 0.35 or (over_dry_rate >= 0.40 and recent_over_dry_rate >= 0.20):
+        overdry_risk_level = "high"
+        overdry_risk_summary = "最近多次停机偏干，系统会更积极地提前收手。"
+    elif recent_over_dry_rate >= 0.20 or over_dry_rate >= 0.25:
+        overdry_risk_level = "medium"
+        overdry_risk_summary = "存在一定过度除湿倾向，系统会适度缩短本次运行下限。"
 
     if rebound_model_ready and drop_model_ready:
         learning_stage = "takeover_ready"
@@ -541,6 +725,8 @@ def compute_predictions(
         start_confirm += 1
     if context.scene == "window_open_suspected":
         start_confirm += 1
+    if short_cycle_rate >= 0.15:
+        start_confirm += 1
     start_confirm = clamp(start_confirm, 2, 8)
 
     stop_confirm = 6 if context.mode == "energy_saving" else 4 if context.mode == "drying" else 5
@@ -552,6 +738,10 @@ def compute_predictions(
         stop_confirm += 1
     if context.scene == "night":
         stop_confirm += 1
+    if overdry_risk_level == "high":
+        stop_confirm -= 1
+    elif overdry_risk_level == "medium":
+        stop_confirm = max(stop_confirm - 0.5, 2)
     stop_confirm = clamp(stop_confirm, 2, 8)
 
     min_runtime_minutes = 32 if context.mode == "energy_saving" else 36 if context.mode == "drying" else 28
@@ -572,6 +762,10 @@ def compute_predictions(
     if final_confidence == "low":
         min_runtime_minutes = clamp((min_runtime_minutes + 30) / 2, 24, 36)
     elif final_confidence == "high" and effective_drop >= 0.18 and effective_rebound <= 0.03:
+        min_runtime_minutes -= 3
+    if overdry_risk_level == "high":
+        min_runtime_minutes -= 5
+    elif overdry_risk_level == "medium":
         min_runtime_minutes -= 3
     min_runtime_minutes = clamp(min_runtime_minutes, 18, 45)
 
@@ -674,6 +868,10 @@ def compute_predictions(
         early_stop_guard_minutes -= 2
     if final_confidence == "low":
         early_stop_guard_minutes = clamp((early_stop_guard_minutes + 15) / 2, 10, 24)
+    if overdry_risk_level == "high":
+        early_stop_guard_minutes -= 4
+    elif overdry_risk_level == "medium":
+        early_stop_guard_minutes -= 2
     early_stop_guard_minutes = clamp(early_stop_guard_minutes, 8, 30)
 
     predicted_stop_minutes: int | None = None
@@ -758,6 +956,7 @@ def compute_predictions(
         "current_trend": trend,
         "effective_drop_rate": round(effective_drop, 3),
         "effective_rebound_rate": round(effective_rebound, 3),
+        **rebound_warmup,
         "learned_drop_rate": round(learned_drop, 3),
         "learned_rebound_rate": round(learned_rebound, 3),
         "drop_source_scope": drop_scope,
@@ -787,6 +986,10 @@ def compute_predictions(
         "control_takeover_summary": control_takeover_summary,
         "anomaly_level": anomaly_level,
         "anomaly_summary": anomaly_summary,
+        "overdry_risk_level": overdry_risk_level,
+        "overdry_risk_summary": overdry_risk_summary,
+        "recent_over_dry_rate": recent_over_dry_rate,
+        "short_cycle_rate_learning": short_cycle_rate,
         "external_start_bias": external_start_bias,
         "external_advice": external_advice,
         "predictor": predictor,

@@ -201,6 +201,9 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         scene = self._classify_scene(now, humidity, target, running, operating_mode)
         current_drop_rate = self._current_drop_rate(now, humidity)
         current_rebound_rate = self._current_rebound_rate(now, humidity)
+        rebound_age_minutes = None
+        if not running and self._last_stop_time is not None:
+            rebound_age_minutes = round(max((now - self._last_stop_time).total_seconds() / 60.0, 0.0), 2)
 
         self._detect_events(now, humidity, target, running, operating_mode, scene)
         runs, rebounds, snapshots = ml_core.build_structured_samples(self._csv_path)
@@ -220,6 +223,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             state="running" if running else "off", running=running,
             current_drop_rate=current_drop_rate, current_rebound_rate=current_rebound_rate,
             start_threshold=target + initial_start_offset, min_runtime_left=0, now=now,
+            rebound_age_minutes=rebound_age_minutes,
         )
         result = ml_core.compute_predictions(
             runs, rebounds, snapshots, context,
@@ -235,8 +239,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result["is_running"] = running
         result["current_drop_rate_live"] = round(current_drop_rate, 3)
         result["current_rebound_rate_live"] = round(current_rebound_rate, 3)
-        result["control_action"] = self._decide_action(now, humidity, target, running, result)
-        result["start_threshold_applied"] = round(self._start_threshold_for_now(now, target, result), 1)
+        result["rebound_age_minutes"] = rebound_age_minutes
         result["is_night_window"] = scene == "night"
         self._append(
             now,
@@ -255,9 +258,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # ---- 预测误差反馈闭环 ----
         # 1) 用历史预测(原始引擎输出)对比实际启停,得到时间偏差;
-        # 2) 把本次"原始预测"落盘(供下次度量);3) 用偏差修正展示/决策用的预测时间与若干倒计时。
+        # 2) 用偏差修正展示/决策用的预测时间与若干倒计时; 3) 把本次"有效预测"落盘供下次度量。
         bias = ml_core.prediction_bias(ml_core.read_jsonl(self._predictions_path), runs)
-        ml_core.log_prediction(self._predictions_path, context, result)
         result["prediction_bias"] = bias
         result["recent_stop_bias_min"] = bias.get("stop_bias_min")
         result["recent_start_bias_min"] = bias.get("start_bias_min")
@@ -287,24 +289,133 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result["model_drop_samples"] = drop_model.get("n", 0)
         result["model_rebound_samples"] = rebound_model.get("n", 0)
 
-        rebound_takeover_rule = "回潮接管条件：样本≥18，模型误差优于启发式，最近启动偏差≤12分钟，短循环率≤15%。"
+        required_rebound_samples = 18
+        required_start_bias_samples = 12
+        start_bias_limit = 12.0
+        short_cycle_limit = 0.15
+        rebound_takeover_rule = (
+            f"回潮接管条件：回潮样本≥{required_rebound_samples}，模型误差优于启发式，"
+            f"最近启动偏差≤{int(start_bias_limit)}分钟，短循环率≤{int(short_cycle_limit * 100)}%。"
+        )
         blockers: list[str] = []
         if not result["model_rebound_active"]:
             blockers.append("回潮模型尚未优于启发式")
-        if int(result.get("model_rebound_samples") or 0) < 18:
+        rebound_samples = int(result.get("model_rebound_samples") or 0)
+        if rebound_samples < required_rebound_samples:
             blockers.append("回潮样本还不够")
         start_bias = result.get("recent_start_bias_min")
         start_bias_n = int(result.get("recent_start_bias_samples") or 0)
-        if start_bias is None or start_bias_n < 12:
+        if start_bias is None or start_bias_n < required_start_bias_samples:
             blockers.append("启动偏差样本还不足")
-        elif abs(float(start_bias)) > 12:
+        elif abs(float(start_bias)) > start_bias_limit:
             blockers.append("最近启动预测偏差仍偏大")
         short_cycle_rate = result.get("short_cycle_rate")
-        if short_cycle_rate is not None and float(short_cycle_rate) > 0.15:
+        if short_cycle_rate is not None and float(short_cycle_rate) > short_cycle_limit:
             blockers.append("短循环率偏高")
         result["rebound_takeover_ready"] = not blockers
         result["rebound_takeover_rule"] = rebound_takeover_rule
         result["rebound_takeover_blockers"] = "；".join(blockers) if blockers else "已满足回潮模型接管条件，可进入小范围验证。"
+        result["rebound_takeover_required_rebound_samples"] = required_rebound_samples
+        result["rebound_takeover_current_rebound_samples"] = rebound_samples
+        result["rebound_takeover_missing_rebound_samples"] = max(required_rebound_samples - rebound_samples, 0)
+        result["rebound_takeover_required_start_bias_samples"] = required_start_bias_samples
+        result["rebound_takeover_current_start_bias_samples"] = start_bias_n
+        result["rebound_takeover_missing_start_bias_samples"] = max(required_start_bias_samples - start_bias_n, 0)
+        result["rebound_takeover_start_bias_limit"] = start_bias_limit
+        result["rebound_takeover_current_start_bias"] = round(float(start_bias), 2) if start_bias is not None else None
+        result["rebound_takeover_start_bias_gap"] = (
+            round(max(abs(float(start_bias)) - start_bias_limit, 0.0), 2) if start_bias is not None else None
+        )
+        result["rebound_takeover_short_cycle_limit"] = short_cycle_limit
+        result["rebound_takeover_current_short_cycle_rate"] = round(float(short_cycle_rate), 3) if short_cycle_rate is not None else None
+        result["rebound_takeover_short_cycle_gap"] = (
+            round(max(float(short_cycle_rate) - short_cycle_limit, 0.0), 3) if short_cycle_rate is not None else None
+        )
+
+        gap_parts: list[str] = []
+        if not result["model_rebound_active"]:
+            gap_parts.append("回潮模型还没稳定优于启发式")
+        if result["rebound_takeover_missing_rebound_samples"] > 0:
+            gap_parts.append(f"回潮样本还差 {result['rebound_takeover_missing_rebound_samples']} 条")
+        if result["rebound_takeover_missing_start_bias_samples"] > 0:
+            gap_parts.append(f"启动偏差样本还差 {result['rebound_takeover_missing_start_bias_samples']} 条")
+        elif result["rebound_takeover_start_bias_gap"] not in (None, 0):
+            gap_parts.append(f"启动偏差还需收敛 {result['rebound_takeover_start_bias_gap']} 分钟")
+        if result["rebound_takeover_short_cycle_gap"] not in (None, 0):
+            gap_parts.append(
+                f"短循环率还需下降 {round(result['rebound_takeover_short_cycle_gap'] * 100, 1)}%"
+            )
+        result["rebound_takeover_gap_summary"] = "；".join(gap_parts) if gap_parts else "已经满足全部接管门槛。"
+        met_items: list[str] = []
+        missing_items: list[str] = []
+        if result["model_rebound_active"]:
+            met_items.append("回潮模型已可用")
+        else:
+            missing_items.append("回潮模型尚未优于启发式")
+        if rebound_samples >= required_rebound_samples:
+            met_items.append("回潮样本达标")
+        else:
+            missing_items.append(f"回潮样本还差 {result['rebound_takeover_missing_rebound_samples']} 条")
+        if start_bias is not None and start_bias_n >= required_start_bias_samples and abs(float(start_bias)) <= start_bias_limit:
+            met_items.append("启动偏差已收敛")
+        elif start_bias_n < required_start_bias_samples:
+            missing_items.append(f"启动偏差样本还差 {result['rebound_takeover_missing_start_bias_samples']} 条")
+        else:
+            missing_items.append(f"启动偏差还需收敛 {result['rebound_takeover_start_bias_gap']} 分钟")
+        if short_cycle_rate is None or float(short_cycle_rate) <= short_cycle_limit:
+            met_items.append("短循环率安全")
+        else:
+            missing_items.append(
+                f"短循环率还需下降 {round(result['rebound_takeover_short_cycle_gap'] * 100, 1)}%"
+            )
+        result["rebound_takeover_total_checks"] = 4
+        result["rebound_takeover_met_checks"] = len(met_items)
+        result["rebound_takeover_missing_checks"] = max(4 - len(met_items), 0)
+        result["rebound_takeover_met_items"] = "、".join(met_items) if met_items else "暂未满足"
+        result["rebound_takeover_missing_items"] = "；".join(missing_items) if missing_items else "无"
+        result["rebound_takeover_allow_now"] = bool(
+            result["rebound_takeover_ready"]
+            and result["model_rebound_active"]
+            and result.get("prediction_confidence") in {"medium", "high"}
+        )
+
+        takeover_active = bool(result["rebound_takeover_allow_now"])
+        if takeover_active and self.control_enabled:
+            takeover_state = "active"
+            takeover_state_cn = "回潮模型已参与开机"
+            takeover_summary = "当前已启用回潮模型参与开机时机判断，仍保留阈值与锁定期兜底。"
+        elif takeover_active:
+            takeover_state = "ready"
+            takeover_state_cn = "可进入接管验证"
+            takeover_summary = "回潮模型已达到验证门槛；打开自主控制后，会先在开机侧小范围接管。"
+        elif result["model_rebound_active"]:
+            takeover_state = "validating"
+            takeover_state_cn = "回潮模型验证中"
+            takeover_summary = "回潮模型已开始优于启发式，但仍需更多样本和更小偏差才能进入接管。"
+        else:
+            takeover_state = "fallback"
+            takeover_state_cn = "固定规则主控"
+            takeover_summary = "当前仍以固定阈值和最小运行时间为主，模型继续在后台学习。"
+        result["rebound_takeover_state"] = takeover_state
+        result["rebound_takeover_state_cn"] = takeover_state_cn
+        result["rebound_takeover_summary"] = takeover_summary
+
+        anomaly = ml_core.build_anomaly_report(
+            runs,
+            rebounds,
+            context,
+            result.get("effective_drop_rate") or 0.0,
+            result.get("effective_rebound_rate") or 0.0,
+            outcomes=outcomes,
+            bias=bias,
+        )
+        result.update(anomaly)
+
+        self._apply_start_gate_feedback(now, humidity, target, result)
+        ml_core.log_prediction(self._predictions_path, context, result)
+
+        result["control_action"] = self._decide_action(now, humidity, target, running, result)
+        result["start_threshold_applied"] = round(self._start_threshold_for_now(now, target, result), 1)
         return result
 
     # ---- 多设备学习(只观察,不控制)---------------------------------------------
@@ -443,17 +554,89 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             elif stb < -5:  # 开机偏早不足(实际比预测早→我们开晚了):加大提前窗口
                 result["auto_start_window"] = ml_core.clamp(result.get("auto_start_window", 20) + 3, 5, 45)
 
+    def _apply_start_gate_feedback(self, now: datetime, humidity: float, target: float,
+                                   result: dict[str, Any]) -> None:
+        """把锁定期和跳锁定条件合并进"实际可执行"的开机时间展示。"""
+        raw_minutes = result.get("predicted_next_start_minutes")
+        raw_time = result.get("predicted_next_start_time")
+        result["predicted_next_start_raw_minutes"] = raw_minutes
+        result["predicted_next_start_raw_time"] = raw_time
+        result["lockout_remaining_minutes"] = 0
+        result["skip_lock_ready"] = False
+        result["start_gate_status_cn"] = "按阈值等待"
+
+        if result.get("is_running"):
+            result["start_gate_status_cn"] = "运行中"
+            return
+
+        lockout = result.get("lockout_minutes", 45) or 45
+        idle_min = None
+        if self._last_stop_time is not None:
+            idle_min = max((now - self._last_stop_time).total_seconds() / 60.0, 0.0)
+        if idle_min is None:
+            return
+
+        remaining = max(lockout - idle_min, 0.0)
+        result["lockout_remaining_minutes"] = round(remaining, 1)
+
+        lock_release_delta = result.get("lock_release_delta", 10) or 10
+        confidence = result.get("prediction_confidence", "low")
+        takeover_ready = bool(result.get("rebound_takeover_ready") and result.get("model_rebound_active"))
+        skip_lock_ready = bool(
+            result.get("allow_skip_lock")
+            and takeover_ready
+            and confidence in {"medium", "high"}
+            and humidity >= target + float(lock_release_delta)
+        )
+        result["skip_lock_ready"] = skip_lock_ready
+
+        if remaining <= 0:
+            result["start_gate_status_cn"] = "锁定已结束"
+            return
+        if skip_lock_ready:
+            result["start_gate_status_cn"] = "满足跳锁定条件"
+            return
+
+        effective_minutes = max(int(round(raw_minutes or 0)), int(round(remaining)))
+        result["predicted_next_start_minutes"] = effective_minutes
+        result["predicted_next_start_time"] = (now + timedelta(minutes=effective_minutes)).strftime("%H:%M:%S")
+        result["start_gate_status_cn"] = f"锁定中，还需约 {int(round(remaining))} 分钟"
+
     def _decide_action(self, now: datetime, humidity: float, target: float,
                        running: bool, result: dict[str, Any]) -> str | None:
         """带硬安全限位的启停判定。返回 'start'/'stop'/None(建议;是否执行由总开关决定)。"""
         start_threshold = self._start_threshold_for_now(now, target, result)
         min_runtime = result.get("min_runtime_minutes", 30) or 30
         lockout = result.get("lockout_minutes", 45) or 45
+        start_confirm = result.get("start_confirm_minutes", 5) or 5
+        lock_release_delta = result.get("lock_release_delta", 10) or 10
+        confidence = result.get("prediction_confidence", "low")
+        takeover_ready = bool(result.get("rebound_takeover_ready") and result.get("model_rebound_active"))
+        predicted_start_minutes = result.get("predicted_next_start_minutes")
         if not running:
             if self._last_stop_time is not None:
                 idle_min = (now - self._last_stop_time).total_seconds() / 60
                 if idle_min < lockout:  # 锁定期内不重启,防短循环
-                    return None
+                    can_skip_lock = bool(
+                        result.get("allow_skip_lock")
+                        and takeover_ready
+                        and confidence in {"medium", "high"}
+                        and predicted_start_minutes is not None
+                        and predicted_start_minutes <= 0
+                        and humidity >= target + float(lock_release_delta)
+                    )
+                    if not can_skip_lock:
+                        return None
+            model_start_floor = target + max(2.0, float((result.get("night_start_offset") if result.get("is_night_window") else result.get("day_start_offset")) or 4) - 2.0)
+            if (
+                takeover_ready
+                and confidence in {"medium", "high"}
+                and predicted_start_minutes is not None
+                and predicted_start_minutes <= start_confirm
+                and humidity >= model_start_floor
+                and result.get("scene") != "window_open_suspected"
+            ):
+                return "start"
             return "start" if humidity >= start_threshold else None
         # 运行中
         if humidity <= target - LOW_PROTECT_DELTA:
@@ -461,13 +644,20 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         run_min = (now - self._run_start_time).total_seconds() / 60 if self._run_start_time else min_runtime
         predicted_stop_minutes = result.get("predicted_stop_minutes")
         early_stop_guard = result.get("early_stop_guard_minutes", 15) or 15
-        confidence = result.get("prediction_confidence", "low")
+        overdry_risk = result.get("overdry_risk_level", "low")
         # 模型已有一定把握时,允许在接近目标且已运行足够久时提前收手,降低过度除湿概率。
         if (
             predicted_stop_minutes is not None
             and predicted_stop_minutes <= 0
             and humidity <= target + 0.5
             and run_min >= early_stop_guard
+            and confidence in {"medium", "high"}
+        ):
+            return "stop"
+        if (
+            overdry_risk in {"medium", "high"}
+            and run_min >= early_stop_guard
+            and humidity <= target + (1.0 if overdry_risk == "high" else 0.6)
             and confidence in {"medium", "high"}
         ):
             return "stop"

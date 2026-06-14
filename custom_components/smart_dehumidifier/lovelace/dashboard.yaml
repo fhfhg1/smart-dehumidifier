@@ -214,6 +214,91 @@ cards:
     multiline_secondary: true
 
   - type: custom:mushroom-template-card
+    primary: 接管准备度
+    secondary: >-
+      {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+      {{ state_attr(e,'rebound_takeover_summary') or '当前仍以固定规则为主。' }}
+      \n{% if state_attr(e,'rebound_warmup_active') %}
+        停机预热中，已停 {{ state_attr(e,'rebound_warmup_minutes') or 0 }} 分钟，回潮预测会先偏向历史样本。
+      {% else %}
+        {{ state_attr(e,'start_gate_status_cn') or '按阈值等待' }}
+      {% endif %}
+    icon: mdi:shield-check-outline
+    icon_color: >-
+      {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+      {% if state_attr(e,'rebound_takeover_allow_now') and state_attr(e,'control_enabled') %} green
+      {% elif state_attr(e,'rebound_takeover_allow_now') %} teal
+      {% else %} blue-grey
+      {% endif %}
+    multiline_secondary: true
+
+  - type: grid
+    columns: 3
+    square: false
+    cards:
+      - type: custom:mushroom-template-card
+        primary: >-
+          {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+          {{ state_attr(e,'rebound_takeover_met_checks') or 0 }}/{{ state_attr(e,'rebound_takeover_total_checks') or 4 }} 项
+        secondary: >-
+          {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+          已满足
+          \n{{ state_attr(e,'rebound_takeover_met_items') or '暂未满足' }}
+        icon: mdi:check-decagram-outline
+        icon_color: green
+        multiline_secondary: true
+      - type: custom:mushroom-template-card
+        primary: >-
+          {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+          {{ state_attr(e,'rebound_takeover_missing_checks') or 0 }} 项
+        secondary: >-
+          {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+          还差多少
+          \n{{ state_attr(e,'rebound_takeover_missing_items') or state_attr(e,'rebound_takeover_gap_summary') or '无' }}
+        icon: mdi:progress-clock
+        icon_color: amber
+        multiline_secondary: true
+      - type: custom:mushroom-template-card
+        primary: >-
+          {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+          {% if state_attr(e,'rebound_takeover_allow_now') and state_attr(e,'control_enabled') %}
+            已参与接管
+          {% elif state_attr(e,'rebound_takeover_allow_now') %}
+            可进入接管
+          {% else %}
+            暂不允许
+          {% endif %}
+        secondary: >-
+          {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+          当前是否允许接管
+          \n{{ state_attr(e,'rebound_takeover_state_cn') or '固定规则主控' }}
+        icon: mdi:swap-horizontal-circle-outline
+        icon_color: >-
+          {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+          {% if state_attr(e,'rebound_takeover_allow_now') and state_attr(e,'control_enabled') %} green
+          {% elif state_attr(e,'rebound_takeover_allow_now') %} teal
+          {% else %} grey
+          {% endif %}
+        multiline_secondary: true
+
+  - type: custom:mushroom-template-card
+    primary: 诊断与保护
+    secondary: >-
+      {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+      过度除湿风险：{{ {'low':'低','medium':'中','high':'高'}.get(state_attr(e,'overdry_risk_level'),'低') }}
+      · {{ state_attr(e,'overdry_risk_summary') or '当前未发现明显过度除湿风险。' }}
+      \n异常诊断：{{ state_attr(e,'anomaly_title') or '状态稳定' }} · {{ state_attr(e,'anomaly_summary') or '当前没有发现明显异常。' }}
+      \n建议：{{ state_attr(e,'anomaly_actions') or '继续按当前模式运行即可。' }}
+    icon: mdi:stethoscope
+    icon_color: >-
+      {% set lvl = state_attr('sensor.smart_dehumidifier_learning_engine','anomaly_level') %}
+      {% if lvl == 'warning' %} red
+      {% elif lvl == 'notice' %} amber
+      {% else %} teal
+      {% endif %}
+    multiline_secondary: true
+
+  - type: custom:mushroom-template-card
     primary: 环境与健康
     secondary: >-
       {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
