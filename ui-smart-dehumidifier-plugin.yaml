@@ -141,31 +141,23 @@ views:
             primary: 预测与学习
             secondary: >-
               {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
-              {% set runs = state_attr(e,'dataset_runs') or 0 %}
-              {% set rebounds = state_attr(e,'dataset_rebounds') or 0 %}
-              除湿 {{ state_attr(e,'effective_drop_rate') or 0 }} · 回潮 {{ state_attr(e,'effective_rebound_rate') or 0 }} %/分
+              {{ state_attr(e,'readiness_summary') or '仍在积累关键样本，当前以观察和建议为主。' }}
+              \n除湿 {{ state_attr(e,'effective_drop_rate') or 0 }} · 回潮 {{ state_attr(e,'effective_rebound_rate') or 0 }} %/分
               · 最小运行 {{ state_attr(e,'min_runtime_minutes') or 30 }} 分 · 锁定 {{ state_attr(e,'lockout_minutes') or 45 }} 分
-              · 可训练:运行 {{ runs }} 次 / 回潮 {{ rebounds }} 次
-              {% if runs >= 50 and rebounds >= 20 %}
-              \n已具备部分主控基础，可开始对比验证接管效果
-              {% elif runs >= 25 and rebounds >= 12 %}
-              \n已进入参数级学习，可逐步接管建议值
-              {% else %}
-              \n仍在积累关键样本，当前以观察和建议为主
-              {% endif %}
+              \n下一步：{{ state_attr(e,'next_milestone') or '继续积累运行和回潮样本。' }}
             icon: mdi:brain
             icon_color: purple
             multiline_secondary: true
 
           - type: grid
-            columns: 4
+            columns: 3
             square: false
             cards:
               - type: custom:mushroom-template-card
                 primary: >-
                   {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
-                  {{ state_attr(e,'dataset_runs') or 0 }}
-                secondary: 运行样本
+                  {{ (state_attr(e,'dataset_runs') or 0) }} / {{ (state_attr(e,'dataset_rebounds') or 0) }}
+                secondary: 运行 / 回潮样本
                 icon: mdi:play-circle-outline
                 icon_color: blue
                 fill_container: true
@@ -173,41 +165,33 @@ views:
               - type: custom:mushroom-template-card
                 primary: >-
                   {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
-                  {{ state_attr(e,'dataset_rebounds') or 0 }}
-                secondary: 回潮样本
-                icon: mdi:water-sync
-                icon_color: teal
-                fill_container: true
-                layout: vertical
-              - type: custom:mushroom-template-card
-                primary: >-
-                  {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
-                  {{ state_attr(e,'dataset_snapshots') or 0 }}
-                secondary: 快照样本
-                icon: mdi:chart-timeline-variant
-                icon_color: cyan
-                fill_container: true
-                layout: vertical
-              - type: custom:mushroom-template-card
-                primary: >-
-                  {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
-                  {% set runs = state_attr(e,'dataset_runs') or 0 %}
-                  {% set rebounds = state_attr(e,'dataset_rebounds') or 0 %}
-                  {% if runs >= 50 and rebounds >= 20 %}
-                    可主控
-                  {% elif runs >= 25 and rebounds >= 12 %}
-                    可调参
-                  {% else %}
-                    观察中
-                  {% endif %}
+                  {{ state_attr(e,'learning_stage_cn') or '观察积累中' }}
                 secondary: 当前阶段
                 icon: mdi:robot-outline
                 icon_color: >-
                   {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
-                  {% set runs = state_attr(e,'dataset_runs') or 0 %}
-                  {% set rebounds = state_attr(e,'dataset_rebounds') or 0 %}
-                  {% if runs >= 50 and rebounds >= 20 %} green
-                  {% elif runs >= 25 and rebounds >= 12 %} amber
+                  {% if state_attr(e,'learning_stage') == 'takeover_ready' %} green
+                  {% elif state_attr(e,'learning_stage') == 'parameter_learning' %} amber
+                  {% else %} grey
+                  {% endif %}
+                fill_container: true
+                layout: vertical
+              - type: custom:mushroom-template-card
+                primary: >-
+                  {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+                  {% if state_attr(e,'drop_model_ready') and state_attr(e,'rebound_model_ready') %}
+                    双模型就绪
+                  {% elif state_attr(e,'drop_model_ready') %}
+                    下降模型就绪
+                  {% else %}
+                    尚未就绪
+                  {% endif %}
+                secondary: 接管准备度
+                icon: mdi:chart-line-variant
+                icon_color: >-
+                  {% set e = 'sensor.smart_dehumidifier_learning_engine' %}
+                  {% if state_attr(e,'drop_model_ready') and state_attr(e,'rebound_model_ready') %} green
+                  {% elif state_attr(e,'drop_model_ready') %} teal
                   {% else %} grey
                   {% endif %}
                 fill_container: true

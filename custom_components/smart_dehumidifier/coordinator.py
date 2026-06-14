@@ -425,6 +425,18 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if humidity <= target - LOW_PROTECT_DELTA:
             return "stop"  # 低湿保护:无视最小运行时长立即停
         run_min = (now - self._run_start_time).total_seconds() / 60 if self._run_start_time else min_runtime
+        predicted_stop_minutes = result.get("predicted_stop_minutes")
+        early_stop_guard = result.get("early_stop_guard_minutes", 15) or 15
+        confidence = result.get("prediction_confidence", "low")
+        # 模型已有一定把握时,允许在接近目标且已运行足够久时提前收手,降低过度除湿概率。
+        if (
+            predicted_stop_minutes is not None
+            and predicted_stop_minutes <= 0
+            and humidity <= target + 0.5
+            and run_min >= early_stop_guard
+            and confidence in {"medium", "high"}
+        ):
+            return "stop"
         if humidity <= target and run_min >= min_runtime:
             return "stop"
         return None

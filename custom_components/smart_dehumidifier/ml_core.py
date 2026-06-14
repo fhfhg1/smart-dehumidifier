@@ -476,6 +476,21 @@ def compute_predictions(
     scene_sample_count = max(len(drop_values), len(rebound_values))
     strong_learning = scene_sample_count >= 5 and final_confidence in {"medium", "high"}
     mature_learning = scene_sample_count >= 8 and final_confidence == "high"
+    drop_model_ready = len(drop_values) >= 12 and final_confidence in {"medium", "high"}
+    rebound_model_ready = len(rebound_values) >= 18 and final_confidence == "high"
+
+    if rebound_model_ready and drop_model_ready:
+        learning_stage = "takeover_ready"
+        learning_stage_cn = "可进入主控验证"
+        next_milestone = "可开始小范围验证模型接管，重点观察回潮预测和锁定释放。"
+    elif strong_learning:
+        learning_stage = "parameter_learning"
+        learning_stage_cn = "参数学习中"
+        next_milestone = "继续积累更多回潮样本，优先验证回潮预测能否反超启发式。"
+    else:
+        learning_stage = "observing"
+        learning_stage_cn = "观察积累中"
+        next_milestone = "先积累运行和回潮样本，让模型先学会这个房间的基础节奏。"
 
     base_window = 10 if context.mode == "energy_saving" else 30 if context.mode == "drying" else 20
     auto_window = base_window
@@ -719,6 +734,11 @@ def compute_predictions(
         if control_takeover.get(key)
     ) or "当前仍以规则默认值为主"
 
+    readiness_summary = (
+        f"下降样本 {len(drop_values)} 条，回潮样本 {len(rebound_values)} 条；"
+        f"当前处于{learning_stage_cn}阶段。"
+    )
+
     return {
         "learning_state": learning_state,
         "dataset_runs": len(runs),
@@ -726,6 +746,12 @@ def compute_predictions(
         "dataset_snapshots": len(snapshots),
         "dataset_total": len(runs) + len(rebounds) + len(snapshots),
         "scene_sample_count": scene_sample_count,
+        "learning_stage": learning_stage,
+        "learning_stage_cn": learning_stage_cn,
+        "drop_model_ready": drop_model_ready,
+        "rebound_model_ready": rebound_model_ready,
+        "readiness_summary": readiness_summary,
+        "next_milestone": next_milestone,
         "scene": context.scene,
         "mode": context.mode,
         "machine_state": context.state,
