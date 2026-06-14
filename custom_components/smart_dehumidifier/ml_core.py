@@ -533,6 +533,7 @@ class PredictionContext:
     presence: str | None = None      # home / away / unknown
     hvac: str | None = None          # cooling / heating / idle / unknown
     outdoor_humidity: float | None = None
+    outdoor_temperature: float | None = None
     rainy_now: bool | None = None
 
 

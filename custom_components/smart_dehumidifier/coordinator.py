@@ -126,13 +126,14 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 额外设备:在事件循环里读它们当前是否运行,交给 _compute 做循环检测+学习
         extra = opts.get(CONF_EXTRA_APPLIANCES, []) or []
         appliance_running = {eid: self._is_running_state(eid) for eid in extra}
-        # 室外湿度:读插件约定实体(可由 override 指向天气/任意湿度源)。室外高湿时引擎会
-        # 提前开机抵御进湿;读不到则为 None,不参与决策。在事件循环里读、传进 _compute。
-        outdoor_humidity = self._read_float("sensor.smart_dehumidifier_outdoor_humidity")
+        # 室外湿度/温度:插件自带、零配置 —— 直接在事件循环里读 weather 实体,无需用户
+        # 在 configuration.yaml 里贴模板传感器。室外高湿时引擎会提前开机抵御进湿;读不到则
+        # 为 None,不参与决策。温度暂作记录/未来特征,不进当前决策。
+        outdoor_humidity, outdoor_temperature = self._read_outdoor()
 
         result = await self.hass.async_add_executor_job(
             self._compute, humidity, target, running, enable_model, target_mode, temp_c,
-            operating_mode, appliance_running, outdoor_humidity
+            operating_mode, appliance_running, outdoor_humidity, outdoor_temperature
         )
 
         # 接管控制(仅当总开关打开;湿度可用已在上面校验)。动作在事件循环里执行。
@@ -175,6 +176,25 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return None
         return celsius
 
+    def _read_outdoor(self) -> tuple[float | None, float | None]:
+        """室外湿度/温度,插件自带、零配置。
+
+        湿度:优先读约定覆盖实体 sensor.smart_dehumidifier_outdoor_humidity(老用户/手动指
+        定时仍生效),否则自动发现任一带 humidity 属性的 weather 实体。温度:直接读该 weather
+        实体的 temperature 属性(室外温度本就没有独立传感器,天气是最现成的来源)。
+        """
+        humidity = self._read_float("sensor.smart_dehumidifier_outdoor_humidity")
+        temperature: float | None = None
+        for state in self.hass.states.async_all("weather"):
+            attrs = state.attributes
+            if humidity is None and isinstance(attrs.get("humidity"), (int, float)):
+                humidity = float(attrs["humidity"])
+            if temperature is None and isinstance(attrs.get("temperature"), (int, float)):
+                temperature = float(attrs["temperature"])
+            if humidity is not None and temperature is not None:
+                break
+        return humidity, temperature
+
     def _read_float(self, entity_id: str) -> float | None:
         state = self.hass.states.get(entity_id)
         if state is None or state.state in UNAVAILABLE_STATES:
@@ -188,7 +208,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _compute(self, humidity: float, target: float, running: bool, enable_model: bool,
                  target_mode: str, temp_c: float | None, operating_mode: str = DEFAULT_MODE,
                  appliance_running: dict[str, bool] | None = None,
-                 outdoor_humidity: float | None = None) -> dict[str, Any]:
+                 outdoor_humidity: float | None = None,
+                 outdoor_temperature: float | None = None) -> dict[str, Any]:
         now = datetime.now()
 
         if not self._model_loaded or not self._state_loaded:
@@ -229,6 +250,7 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             start_threshold=target + initial_start_offset, min_runtime_left=0, now=now,
             rebound_age_minutes=rebound_age_minutes,
             outdoor_humidity=outdoor_humidity,
+            outdoor_temperature=outdoor_temperature,
         )
         result = ml_core.compute_predictions(
             runs, rebounds, snapshots, context,
@@ -237,6 +259,8 @@ class SmartDehumidifierCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         result["dew_point_c"] = dew_point
         result["mold_risk_level"] = mold_risk
+        result["outdoor_humidity"] = round(outdoor_humidity, 1) if outdoor_humidity is not None else None
+        result["outdoor_temperature"] = round(outdoor_temperature, 1) if outdoor_temperature is not None else None
         result["effective_target"] = target
         result["current_humidity"] = round(humidity, 1)
         result["target_humidity"] = round(target, 1)
