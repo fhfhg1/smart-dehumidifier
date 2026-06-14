@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""智能除湿:回归模型"就绪"监控。
+"""智能除湿:模型"全面接管"监控。
 
-判定"门槛2"是否达成,并附带最新 backtest 摘要。输出一行 JSON:
-  {"status": "ready"|"waiting", "summary": "<给手机看的中文一行>"}
+读集成实际服役的模型 config/smart_dehumidifier/model_latest.json,按 predict_rate
+的同款判据(CV 上 ml_mae <= heuristic_mae 才算"赢、在服役")判断两条速率:
 
-- ready  : model.json 已生成(回归模型真训出来了)——这才是"开始变智能"的硬信号。
-- waiting: 还没训出来;summary 给出"下降样本还差几条到 40"。
+- 下降模型(关机预测):一般已在服役。
+- 回潮模型(开机预测):噪声大、最难——它什么时候开始赢过经验,才是"完全模型驱动"的真信号。
 
-被 Home Assistant 的 command_line 传感器定时调用;automation 在状态由
-waiting→ready 跳变时把 summary 推到手机。纯只读,不改任何状态。
+输出一行 JSON {"status","summary"}:
+- status=ready : 回潮模型也开始赢了(两条都模型驱动)——这才发手机提醒。
+- status=waiting: 回潮仍回退经验;summary 给出两条当前的 模型vs经验 对比。
+
+被 HA 的 command_line 传感器定时调用;automation 在 waiting→ready 跳变时推送。只读。
 """
 from __future__ import annotations
 
@@ -21,32 +24,28 @@ CONFIG = Path("/Users/zhenghaowei/homeassistant-run/config")
 ML_TOOL = Path("/Users/zhenghaowei/Documents/homeassistant/tools/smart_dehumidifier_ml.py")
 PYTHON = "/Users/zhenghaowei/homeassistant-run/.venv/bin/python"
 
-MODEL = CONFIG / "smart_dehumidifier_model.json"
+# 集成实际读写的模型文件(注意:在 smart_dehumidifier/ 子目录,文件名 model_latest.json)
+MODEL = CONFIG / "smart_dehumidifier" / "model_latest.json"
 RUNS = CONFIG / "smart_dehumidifier_runs.jsonl"
-REBOUNDS = CONFIG / "smart_dehumidifier_rebounds.jsonl"
 PREDICTIONS = CONFIG / "smart_dehumidifier_predictions.jsonl"
 
-DROP_TRAIN_THRESHOLD = 40  # MIN_SAMPLES_TO_TRAIN
 
-
-def _count_drop_samples() -> int:
-    if not RUNS.exists():
-        return 0
-    n = 0
-    for line in RUNS.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            if float(json.loads(line).get("drop_rate", 0) or 0) > 0:
-                n += 1
-        except (ValueError, json.JSONDecodeError):
-            continue
-    return n
+def _rate_verdict(entry: dict) -> tuple[bool, str]:
+    """返回 (是否在服役/赢, 中文一句)。判据与 model.predict_rate 一致。"""
+    if not entry or not entry.get("trained"):
+        return False, "未训练"
+    cv = entry.get("cv") or {}
+    ml, heu = cv.get("ml_mae"), cv.get("heuristic_mae")
+    if ml is None or heu is None:
+        return False, "无CV"
+    if ml <= heu:
+        pct = round((heu - ml) / heu * 100) if heu else 0
+        return True, f"服役中(赢经验 {pct}%)"
+    pct = round((ml - heu) / heu * 100) if heu else 0
+    return False, f"回退经验(输 {pct}%)"
 
 
 def _backtest_brief() -> str:
-    """跑一次 backtest，取关机/开机 MAE，失败则返回空串。"""
     try:
         out = subprocess.run(
             [PYTHON, str(ML_TOOL), "backtest", "--predictions", str(PREDICTIONS),
@@ -63,31 +62,29 @@ def _backtest_brief() -> str:
         return ""
 
 
-def _model_verdict() -> str:
-    """model.json 在时，读交叉验证看模型是否赢过经验公式。"""
-    try:
-        d = json.loads(MODEL.read_text(encoding="utf-8"))
-    except Exception:
-        return "模型已生成(读取细节失败)"
-    parts = []
-    for key, label in (("drop_rate", "下降"), ("rebound_rate", "回潮")):
-        cv = (d.get(key) or {}).get("cv") or {}
-        ml, heu = cv.get("ml_mae"), cv.get("heuristic_mae")
-        if ml is not None and heu is not None:
-            parts.append(f"{label}模型{'赢' if ml < heu else '没赢'}经验({ml}vs{heu})")
-    return "；".join(parts) if parts else "模型已生成"
-
-
 def main() -> int:
-    if MODEL.exists():
-        verdict = _model_verdict()
-        brief = _backtest_brief()
-        summary = f"🎉 回归模型已训练!{verdict}。" + (f" 当前{brief}。" if brief else "")
+    if not MODEL.exists():
+        print(json.dumps({"status": "waiting", "summary": "模型尚未生成(集成可能还没训练)。"},
+                         ensure_ascii=False))
+        return 0
+    try:
+        bundle = json.loads(MODEL.read_text(encoding="utf-8"))
+    except Exception:
+        print(json.dumps({"status": "waiting", "summary": "模型文件读取失败。"}, ensure_ascii=False))
+        return 0
+
+    models = bundle.get("models") or {}
+    drop_win, drop_txt = _rate_verdict(models.get("drop_rate"))
+    reb_win, reb_txt = _rate_verdict(models.get("rebound_rate"))
+    brief = _backtest_brief()
+    tail = f" 当前{brief}。" if brief else ""
+
+    if reb_win:
+        summary = (f"🎉 回潮模型开始赢经验了!现在关机+开机预测都由本地模型驱动。"
+                   f"下降:{drop_txt};回潮:{reb_txt}。{tail}")
         print(json.dumps({"status": "ready", "summary": summary}, ensure_ascii=False))
     else:
-        drop = _count_drop_samples()
-        gap = max(DROP_TRAIN_THRESHOLD - drop, 0)
-        summary = f"回归模型还没训出来:下降样本 {drop}/{DROP_TRAIN_THRESHOLD}(还差约 {gap} 次除湿)。"
+        summary = (f"下降模型{drop_txt};回潮模型{reb_txt}(还在回退经验,这是最后的缺口)。{tail}")
         print(json.dumps({"status": "waiting", "summary": summary}, ensure_ascii=False))
     return 0
 
