@@ -14,3 +14,6 @@ __pycache__/
 # 第三方/二进制,勿入库
 HA Remote/
 HA Remote.app/
+
+# 脚步声训练音频,不入库
+footstep_data/
